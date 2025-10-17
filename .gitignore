@@ -1,0 +1,136 @@
+# ======================================================
+# 🧠 PYTHON / JUPYTER
+# ======================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.ipynb_checkpoints/
+venv/
+env/
+ENV/
+*.spec
+*.log
+*.out
+
+# ======================================================
+# 📦 PACKAGE / ENVIRONMENT
+# ======================================================
+.env
+.env.*
+requirements.txt~
+*.lock
+poetry.lock
+Pipfile.lock
+
+# ======================================================
+# 🧩 IDE / EDITOR
+# ======================================================
+.vscode/
+.idea/
+*.iml
+*.code-workspace
+*.suo
+*.user
+*.userosscache
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# ======================================================
+# 🧰 BUILD / CACHE
+# ======================================================
+build/
+dist/
+*.egg-info/
+.cache/
+__pycache__/
+*.pkl
+*.npz
+*.npy
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.tflite
+*.h5
+*.weights
+
+# ======================================================
+# 📊 DATASETS / RESULTS
+# ======================================================
+data/
+datasets/
+dataset/
+outputs/
+output/
+results/
+runs/
+checkpoints/
+logs/
+wandb/
+lightning_logs/
+mlruns/
+*.csv
+*.json
+*.yaml
+*.yml
+*.xml
+*.txt
+*.db
+*.sqlite
+*.hdf5
+
+# ======================================================
+# 🖼️ IMAGE / VIDEO / TEMP
+# ======================================================
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.tif
+*.tiff
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.webm
+*.svg
+*.ico
+tmp/
+temp/
+
+# ======================================================
+# 🧪 EXPERIMENTS
+# ======================================================
+experiments/
+notebooks/
+*.ipynb_checkpoints
+runs/
+*.tensorboard/
+events.out.tfevents.*
+
+# ======================================================
+# 🐳 DOCKER / DEPLOYMENT
+# ======================================================
+.docker/
+docker-compose.override.yml
+*.tar
+*.img
+*.iso
+
+# ======================================================
+# ⚙️ SYSTEM FILES
+# ======================================================
+.DS_Store
+Thumbs.db
+desktop.ini
