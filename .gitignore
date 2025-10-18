@@ -55,7 +55,6 @@ __pycache__/
 *.pkl
 *.npz
 *.npy
-*.pt
 *.pth
 *.ckpt
 *.onnx
