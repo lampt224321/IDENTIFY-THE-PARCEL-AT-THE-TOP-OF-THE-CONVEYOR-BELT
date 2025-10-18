@@ -123,9 +123,12 @@ while True:
 
         # Get bounding box confidence
         conf = detections[i].conf.item()
+        roi_x, roi_y, roi_w, roi_h = 560, 150, 300, 330
+        inside_roi = (roi_x <= center_x <= roi_x + roi_w) and (roi_y <= center_y <= roi_y + roi_h)
+
 
         # Draw box if confidence threshold is high enough
-        if conf > 0.5:
+        if conf > 0.5 and inside_roi:
 
             color = bbox_colors[classidx % 10]
             cv2.rectangle(frame, (xmin,ymin), (xmax,ymax), color, 2)
