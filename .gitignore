@@ -82,7 +82,6 @@ mlruns/
 *.yaml
 *.yml
 *.xml
-*.txt
 *.db
 *.sqlite
 *.hdf5
@@ -92,7 +91,6 @@ mlruns/
 # ======================================================
 *.jpg
 *.jpeg
-*.png
 *.bmp
 *.gif
 *.tif
