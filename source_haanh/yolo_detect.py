@@ -141,7 +141,7 @@ while True:
 
             # Basic example: count the number of objects in the image
             object_count = object_count + 1
-            output_lines.append(f"{classname} {conf:.3f} {center_x} {center_y}")
+            output_lines.append(f"{classname} {conf:.3f} {xmin} {xmax} {ymin} {ymax} {center_x} {center_y}")
 
 
     # Display detection results
