@@ -153,8 +153,6 @@ while True:
     with open(txt_path, 'w') as f:
         f.write('\n'.join(output_lines))
     print(f"Saved result file: {txt_path}")
-    img_path = os.path.join(save_dir, f"box_{base_name}.png")
-    cv2.imwrite(img_path, frame)
     if cv2.waitKey() == ord('q'): # Press 'q' to quit
         break
 
