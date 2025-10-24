@@ -113,8 +113,13 @@ while True:
         xyxy_tensor = detections[i].xyxy.cpu() # Detections in Tensor format in CPU memory
         xyxy = xyxy_tensor.numpy().squeeze() # Convert tensors to Numpy array
         xmin, ymin, xmax, ymax = xyxy.astype(int) # Extract individual coordinates and convert to int
-        center_x = (xmin + xmax) / 2
-        center_y = (ymin + ymax) / 2
+        # compute float center (useful for plotting)
+        cx_f = 0.5 * (xmin + xmax)
+        cy_f = 0.5 * (ymin + ymax)
+
+        # integer indices for image access
+        cx = int(round(cx_f))
+        cy = int(round(cy_f))
 
 
         # Get bounding box class ID and name
@@ -124,7 +129,7 @@ while True:
         # Get bounding box confidence
         conf = detections[i].conf.item()
         roi_x, roi_y, roi_w, roi_h = 560, 150, 300, 330
-        inside_roi = (roi_x <= center_x <= roi_x + roi_w) and (roi_y <= center_y <= roi_y + roi_h)
+        inside_roi = (roi_x-10 <= cx <= roi_x + roi_w) and (roi_y-10 <= cy <= roi_y + roi_h)
 
 
         # Draw box if confidence threshold is high enough
@@ -141,7 +146,7 @@ while True:
 
             # Basic example: count the number of objects in the image
             object_count = object_count + 1
-            output_lines.append(f"{classname} {conf:.3f} {xmin} {xmax} {ymin} {ymax} {center_x} {center_y}")
+            output_lines.append(f"{classname} {conf:.3f} {xmin} {xmax} {ymin} {ymax} {cx} {cy}")
 
 
     # Display detection results
@@ -153,6 +158,8 @@ while True:
     with open(txt_path, 'w') as f:
         f.write('\n'.join(output_lines))
     print(f"Saved result file: {txt_path}")
+    img_path = os.path.join(save_dir, f"box_{base_name}.png")
+    cv2.imwrite(img_path, frame)
     if cv2.waitKey() == ord('q'): # Press 'q' to quit
         break
 
