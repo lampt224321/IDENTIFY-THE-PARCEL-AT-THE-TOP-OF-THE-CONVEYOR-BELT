@@ -76,7 +76,6 @@ def generate_masks(image_folder, model_path, output_folder,
     image_paths = []
     for ext in image_extensions:
         image_paths.extend(Path(image_folder).glob(ext))
-        image_paths.extend(Path(image_folder).glob(ext.upper()))
     
     print(f'\nFound {len(image_paths)} images')
 
