@@ -38,11 +38,11 @@ def collate_fn(batch):
 
 def main():
     # *** THAY ĐỔI: Cập nhật đường dẫn MASK ***
-    base_path = r"/content/drive/MyDrive/ViettelAIRace/train"
+    base_path = r"/content/drive/MyDrive/ViettelAIRace/Train"
     # Thay 'yolo_txt_dir' bằng 'mask_dir'
     mask_dir = r"/content/drive/MyDrive/ViettelAIRace/yolact_result_train"
-    gt_csv_path = r"/content/drive/MyDrive/ViettelAIRace/Public_train.csv"
-    save_dir = 'checkpoints'
+    gt_csv_path = r"/content/drive/MyDrive/ViettelAIRace/Train/Public_train.csv"
+    save_dir = '/content/checkpoints'
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)

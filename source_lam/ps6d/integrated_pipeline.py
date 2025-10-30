@@ -46,22 +46,41 @@ class PS6DInference:
             indices = np.random.choice(len(points_norm), self.num_points, replace=True)
         points_sampled = points_norm[indices]
         points_tensor = torch.FloatTensor(points_sampled).unsqueeze(0).to(self.device)
+        
         with torch.no_grad():
-            pred_offset, pred_quat = self.model(points_tensor)
+            pred_offset, pred_quat = self.model(points_tensor) 
+            
         pred_centroids = points_tensor[0] + pred_offset[0]
         centroid_norm = pred_centroids.mean(dim=0).cpu().numpy()
         centroid = self.denormalize_centroid(centroid_norm, scale, offset)
         variance = pred_centroids.var(dim=0).mean().cpu().item()
         confidence = np.exp(-variance * 10)
+        
         return centroid, confidence
 
 # ============================================================
-# Helper Function (Lấy từ Cell 3)
+# *** HÀM MỚI: Chiếu 3D sang 2D ***
+# ============================================================
+def project_3d_to_2d(p3d, intr):
+    """
+    Chiếu một điểm 3D (trong hệ tọa độ camera màu) sang tọa độ pixel 2D.
+    p3d: [x, y, z]
+    intr: camera intrinsics
+    """
+    x, y, z = p3d[0], p3d[1], p3d[2]
+    if z < 1e-5: # Tránh chia cho 0
+        return None
+    u = (x * intr['fx'] / z) + intr['cx']
+    v = (y * intr['fy'] / z) + intr['cy']
+    return np.array([u, v])
+
+# ============================================================
+# Helper Function (*** SỬA ĐỔI: ĐÃ XÓA LOGIC ROI ***)
 # ============================================================
 
 def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t):
     """
-    Trích xuất point cloud trực tiếp từ mask đen trắng (uint8).
+    Trích xuất TOÀN BỘ point cloud từ mask (KHÔNG LỌC ROI).
     """
     if mask_img.shape != depth_img.shape:
         mask_img = cv2.resize(mask_img, (depth_img.shape[1], depth_img.shape[0]), interpolation=cv2.INTER_NEAREST)
@@ -70,7 +89,9 @@ def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t)
     if len(u) == 0:
         return np.array([])
 
-    Z_values = depth_img[v, u]
+    # *** LOGIC LỌC ROI ĐÃ BỊ XÓA BỎ ***
+    
+    Z_values = depth_img[v, u] # Dùng (u, v) gốc
     Z = Z_values.astype(np.float32) / 1000.0
 
     valid_depth = (Z > 0.01) & (Z < 5.0) & np.isfinite(Z)
@@ -90,8 +111,10 @@ def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t)
     return points_color_valid
 
 # ============================================================
-# Camera Intrinsics (Không đổi)
+# Camera Intrinsics & ROI (Không đổi)
 # ============================================================
+
+ROI_BOX = (560, 150, 300, 330)
 
 color_intrinsics = {
     'width': 1280, 'height': 720,
@@ -111,40 +134,37 @@ R_depth_to_color = np.array([
 t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 
 # ============================================================
-# Main Pipeline (Có logic chọn)
+# Main Pipeline (*** CẬP NHẬT LOGIC LỌC ROI ***)
 # ============================================================
 
 def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submission_ps6d.csv"):
     """
-    Main pipeline tích hợp PS6D (phiên bản dùng MASK NPY + Logic chọn)
-
-    Args:
-        model_path: Đường dẫn đến model ps6d_best.pth
-        base_path: Đường dẫn đến thư mục train/test (chứa rgb/ depth/)
-        mask_dir: Đường dẫn đến thư mục yolact_result/ (chứa masks/)
-        output_csv: Tên file submission
+    Main pipeline tích hợp PS6D (Phiên bản LỌC ỨNG CỬ VIÊN bằng ROI)
     """
-    # Khởi tạo PS6D
     try:
         ps6d = PS6DInference(model_path, device='cuda' if torch.cuda.is_available() else 'cpu')
     except FileNotFoundError:
         return
 
-    # Lấy file ảnh
     rgb_files = sorted(glob.glob(os.path.join(base_path, "rgb", "*.png")))
     depth_files = sorted(glob.glob(os.path.join(base_path, "depth", "*.png")))
 
     all_final_outputs = []
 
+    # Định nghĩa ranh giới ROI một lần
+    u_min, v_min, w, h = ROI_BOX
+    u_max = u_min + w
+    v_max = v_min + h
+    print(f"Đã kích hoạt ROI 2D: u=[{u_min}, {u_max}), v=[{v_min}, {v_max})")
+
     for rgb_path, depth_path in zip(rgb_files, depth_files):
-        IMAGE_FILENAME = os.path.basename(rgb_path) # '0000.png'
-        BASE_NAME = os.path.splitext(IMAGE_FILENAME)[0] # '0000'
+        IMAGE_FILENAME = os.path.basename(rgb_path)
+        BASE_NAME = os.path.splitext(IMAGE_FILENAME)[0] 
 
         print(f"\n{'='*50}")
         print(f"ĐANG XỬ LÝ ẢNH: {IMAGE_FILENAME}")
         print(f"{'='*50}")
 
-        # Load ảnh
         depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
         img = cv2.imread(rgb_path, cv2.IMREAD_UNCHANGED)
 
@@ -153,34 +173,25 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
             all_final_outputs.append((IMAGE_FILENAME, None, None, None))
             continue
 
-        # *** SỬA ĐƯỜNG DẪN: Load file .NPY từ thư mục masks/ ***
-        mask_stack_path = os.path.join(mask_dir, "masks", BASE_NAME + ".npy") # Tìm trong yolact_result/masks/
+        mask_search_pattern = os.path.join(mask_dir, "masks", BASE_NAME + "_*.npy")
+        individual_mask_files = sorted(glob.glob(mask_search_pattern))
 
-        if not os.path.exists(mask_stack_path):
-            print(f"  -> Lỗi: Không tìm thấy MASK STACK tại {mask_stack_path}")
+        if not individual_mask_files:
+            print(f"  -> Lỗi: Không tìm thấy file MASK NPY nào với mẫu {mask_search_pattern}")
             all_final_outputs.append((IMAGE_FILENAME, None, None, None))
             continue
+            
+        print(f"Tìm thấy {len(individual_mask_files)} mask .npy.")
 
-        try:
-            mask_stack = np.load(mask_stack_path)
-        except Exception as e:
-            print(f"  -> Lỗi khi load file .npy {mask_stack_path}: {e}")
-            all_final_outputs.append((IMAGE_FILENAME, None, None, None))
-            continue
-
-        if mask_stack.ndim != 3 or mask_stack.shape[0] == 0:
-             print(f"  -> Lỗi: File .npy có shape không hợp lệ: {mask_stack.shape}")
-             all_final_outputs.append((IMAGE_FILENAME, None, None, None))
-             continue
-
-        num_candidates = mask_stack.shape[0]
-        print(f"Tìm thấy {num_candidates} ứng cử viên (mask) từ file .npy.")
-
-        # Lặp qua từng MASK để tìm ứng cử viên
         candidate_results = []
-        for i in range(num_candidates):
+        
+        for i, mask_file_path in enumerate(individual_mask_files):
             try:
-                mask_instance = mask_stack[i]
+                mask_instance = np.load(mask_file_path)
+
+                if mask_instance.ndim != 2:
+                    print(f"  -> Lỗi: File .npy {mask_file_path} không phải 2D. Bỏ qua.")
+                    continue
 
                 if mask_instance.dtype == bool:
                     mask_img = (mask_instance).astype(np.uint8) * 255
@@ -189,7 +200,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 else:
                     mask_img = (mask_instance > 0.5).astype(np.uint8) * 255
 
-                # Trích xuất Point Cloud
+                # *** BƯỚC 1: Lấy TOÀN BỘ đám mây điểm (KHÔNG CẮT XÉN) ***
                 points_3d = get_point_cloud_from_mask(
                     mask_img, depth,
                     depth_intrinsics, color_intrinsics,
@@ -197,41 +208,62 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 )
 
                 if len(points_3d) < 100:
-                    print(f"  -> Mask {i}: Quá ít điểm ({len(points_3d)})")
+                    # Bỏ qua nếu mask này quá ít điểm
                     continue
 
-                # Chạy PS6D
+                # *** BƯỚC 2: Chạy PS6D để lấy tâm 3D dự đoán ***
                 centroid, confidence = ps6d.predict_centroid(points_3d)
 
-                if centroid is not None:
-                    candidate_results.append({
-                        'centroid': centroid,
-                        'confidence': confidence,
-                        'mask_index': i
-                    })
-                    print(f"  Mask {i}: Tâm PS6D = ({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}), "
-                          f"Confidence = {confidence:.3f}")
+                if centroid is None:
+                    continue # Bỏ qua nếu dự đoán thất bại
+
+                # *** BƯỚC 3: LỌC BẰNG ROI ***
+                # Chiếu tâm 3D dự đoán ngược lại 2D
+                centroid_2d = project_3d_to_2d(centroid, color_intrinsics)
+                
+                if centroid_2d is None:
+                    print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Tâm 3D có Z=0)")
+                    continue
+                
+                u_pred, v_pred = centroid_2d
+                
+                # Kiểm tra xem tâm 2D dự đoán có nằm trong ROI không
+                if not (u_min <= u_pred < u_max and v_min <= v_pred < v_max):
+                    print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Tâm 2D ({u_pred:.0f}, {v_pred:.0f}) nằm ngoài ROI)")
+                    continue
+
+                # *** BƯỚC 4: Thêm vào danh sách ứng cử viên ***
+                candidate_results.append({
+                    'centroid': centroid,
+                    'confidence': confidence,
+                    'mask_index': i,
+                    'file_name': os.path.basename(mask_file_path)
+                })
+                print(f"  File {os.path.basename(mask_file_path)}: ĐƯỢC CHỌN (Tâm PS6D = ({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}))")
 
             except Exception as e:
-                print(f"  -> Lỗi khi xử lý mask {i}: {e}")
+                print(f"  -> Lỗi khi xử lý file mask {mask_file_path}: {e}")
 
-        # Chọn MASK tốt nhất
+        # Logic chọn MASK tốt nhất (Không đổi)
         if len(candidate_results) == 0:
-            print("[KẾT QUẢ]: Không có ứng cử viên hợp lệ từ mask")
+            print("[KẾT QUẢ]: Không có ứng cử viên hợp lệ (Tất cả đã bị lọc bởi ROI)")
             all_final_outputs.append((IMAGE_FILENAME, None, None, None))
             continue
 
-        candidate_results.sort(key=lambda x: (x['centroid'][2], -x['confidence']))
+        # Ưu tiên 1: Sắp xếp theo Z (gần nhất)
+        candidate_results.sort(key=lambda x: x['centroid'][2])
+        
         z_min = candidate_results[0]['centroid'][2]
         tie_group = [c for c in candidate_results if abs(c['centroid'][2] - z_min) < 0.005] # 5mm
 
         if len(tie_group) > 1:
-            tie_group.sort(key=lambda x: x['confidence'], reverse=True)
+            # Ưu tiên 2: Xử lý đồng hạng bằng khoảng cách 3D (xa nhất)
+            tie_group.sort(key=lambda x: np.linalg.norm(x['centroid']), reverse=True)
             selected = tie_group[0]
-            print(f"  -> Nhiều ứng cử viên gần nhau, chọn mask {selected['mask_index']} theo confidence.")
+            print(f"  -> Nhiều ứng cử viên gần nhau, chọn file {selected['file_name']} theo khoảng cách 3D (xa nhất).")
         else:
             selected = tie_group[0]
-            print(f"  -> Chọn mask {selected['mask_index']} (gần nhất).")
+            print(f"  -> Chọn file {selected['file_name']} (gần nhất - Z min).")
 
         c = selected['centroid']
         print(f"\n--- [KẾT QUẢ CUỐI CÙNG CHO ẢNH {IMAGE_FILENAME}] ---")
@@ -241,7 +273,6 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
     print("\n=== HOÀN TẤT QUÁ TRÌNH ===")
 
-    # Save results
     df = pd.DataFrame(all_final_outputs, columns=['image_filename', 'x', 'y', 'z'])
     df.to_csv(output_csv, index=False, float_format='%.6f')
     print(f"Đã lưu kết quả ra file: {output_csv}")
@@ -249,17 +280,15 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
     return df
 
 # ============================================================
-# Usage Example
+# Usage Example (Không đổi)
 # ============================================================
 
 if __name__ == "__main__":
     MODEL_PATH = "/content/checkpoints/ps6d_best.pth"
     BASE_DATA_PATH = "/content/drive/MyDrive/ViettelAIRace/train"
-    # Sửa đường dẫn này trỏ đến thư mục yolact_result/ (chứa masks/)
     MASK_DIR = "/content/drive/MyDrive/ViettelAIRace/yolact_result_train"
     OUTPUT_CSV = "submission_ps6d.csv"
 
-    # Run inference with PS6D
     results = main_pipeline_with_ps6d(
         model_path=MODEL_PATH,
         base_path=BASE_DATA_PATH,
