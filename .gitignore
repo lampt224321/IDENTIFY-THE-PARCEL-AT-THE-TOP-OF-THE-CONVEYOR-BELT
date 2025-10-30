@@ -30,6 +30,7 @@ requirements.txt~
 *.lock
 poetry.lock
 Pipfile.lock
+venv_ps6d/
 
 # ======================================================
 # 🧩 IDE / EDITOR
