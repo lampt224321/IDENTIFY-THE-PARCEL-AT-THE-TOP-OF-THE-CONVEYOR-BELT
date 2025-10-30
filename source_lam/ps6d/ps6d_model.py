@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation as R
 import open3d as o3d
 
 # ============================================================
-# PointNet++ Basic Modules (Không đổi)
+# PointNet++ Basic Modules 
 # ============================================================
 
 def square_distance(src, dst):

@@ -14,16 +14,12 @@ import glob
 from ps6d_model import PS6DLoss, PS6DNetwork
 
 # ============================================================
-# Helper Functions
+# Helper Functions (Không đổi)
 # ============================================================
 
 def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t):
-    """
-    Trích xuất point cloud trực tiếp từ mask đen trắng (uint8).
-    """
     if mask_img.shape != depth_img.shape:
         mask_img = cv2.resize(mask_img, (depth_img.shape[1], depth_img.shape[0]), interpolation=cv2.INTER_NEAREST)
-
     v, u = np.where(mask_img > 128)
     if len(u) == 0:
         return np.array([])
@@ -42,9 +38,6 @@ def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t)
     return points_color_valid
 
 def normalize_point_cloud(points):
-    """
-    Chuẩn hóa đám mây điểm (Không đổi)
-    """
     centroid = np.mean(points, axis=0)
     centered = points - centroid
     max_extent = np.max(np.abs(centered)) + 1e-6
@@ -53,11 +46,8 @@ def normalize_point_cloud(points):
     return normalized, scale, centroid
 
 def project_3d_to_2d(p3d, intr):
-    """
-    Chiếu một điểm 3D (trong hệ tọa độ camera màu) sang tọa độ pixel 2D.
-    """
     x, y, z = p3d[0], p3d[1], p3d[2]
-    if z < 1e-5: # Tránh chia cho 0 hoặc giá trị quá nhỏ
+    if z < 1e-5:
         return None
     u = (x * intr['fx'] / z) + intr['cx']
     v = (y * intr['fy'] / z) + intr['cy']
@@ -102,7 +92,7 @@ class ParcelDataset(Dataset):
             image_name_gt = gt_row['image_filename']
             gt_centroid_world = np.array([gt_row['x'], gt_row['y'], gt_row['z']], dtype=np.float32)
 
-            # *** BƯỚC 1: Chiếu GT 3D sang 2D ***
+            # 2. Chiếu GT 3D sang 2D
             gt_centroid_2d = project_3d_to_2d(gt_centroid_world, self.color_intr)
             if gt_centroid_2d is None:
                 print(f"Warning: GT centroid 3D có Z=0 cho {image_name_gt}. Bỏ qua...")
@@ -125,17 +115,20 @@ class ParcelDataset(Dataset):
             else:
                 gt_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
-            # 2. Load ảnh (Không đổi)
+            # 3. Load ảnh
             depth_path = os.path.join(self.depth_dir, actual_image_filename)
             depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
             if depth_img is None:
                 print(f"Warning: Không thể load ảnh {depth_path}. Bỏ qua...")
                 return None
             
-            H, W = depth_img.shape[:2] # Lấy kích thước ảnh (720, 1280)
+            H, W = depth_img.shape[:2]
 
+            # ===========================================================
+            # *** BẮT ĐẦU SỬA ĐỔI LOGIC CHỌN MASK (Dilated PiM + Fall-back) ***
+            # ===========================================================
             
-            # 3. Tìm tất cả các mask .NPY ứng cử viên
+            # 4. Tìm tất cả các mask .NPY ứng cử viên
             mask_search_pattern = os.path.join(self.npy_mask_dir, base_name_for_files + "_*.npy")
             candidate_mask_files = sorted(glob.glob(mask_search_pattern))
 
@@ -143,17 +136,31 @@ class ParcelDataset(Dataset):
                 print(f"Warning: Không tìm thấy file MASK NPY nào cho {base_name_for_files}. Bỏ qua...")
                 return None
 
-            # 4. Tìm mask .NPY "đúng" bằng cách kiểm tra "Point-in-Mask"
+            # 5. Logic ghép cặp
             best_mask_img = None
+            found_by_pin = False
             
-            # Lấy tọa độ GT 2D (dưới dạng số nguyên)
             u_gt = int(round(gt_centroid_2d[0]))
             v_gt = int(round(gt_centroid_2d[1]))
             
-            # Kiểm tra xem tọa độ GT có nằm trong ảnh không
             if not (0 <= v_gt < H and 0 <= u_gt < W):
                 print(f"Warning: Tọa độ GT 2D ({u_gt}, {v_gt}) nằm ngoài ảnh {base_name_for_files}. Bỏ qua...")
                 return None
+
+            fallback_candidates = []
+            
+            # *** ĐỊNH NGHĨA VÙNG MỞ RỘNG (DILATION) ***
+            # Dùng 5x5 (radius=2)
+            # (Bạn có thể đổi radius=1 để dùng 3x3 nếu 5x5 quá lỏng lẻo)
+            radius = 2 
+            v_start = max(0, v_gt - radius)
+            v_end = min(H, v_gt + radius + 1)
+            u_start = max(0, u_gt - radius)
+            u_end = min(W, u_gt + radius + 1)
+            
+            # Tọa độ gốc 2D (cho fall-back)
+            gt_centroid_2d_flat = np.array([u_gt, v_gt])
+
 
             for mask_path in candidate_mask_files:
                 try:
@@ -165,27 +172,44 @@ class ParcelDataset(Dataset):
                     else:
                         mask_img = (mask_instance > 0.5).astype(np.uint8) * 255
                     
-                    # Resize mask về kích thước chuẩn của ảnh depth
                     if mask_img.shape[0] != H or mask_img.shape[1] != W:
                          mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
 
-                    # *** LOGIC MỚI: Kiểm tra pixel tại (v_gt, u_gt) ***
-                    if mask_img[v_gt, u_gt] > 128:
-                        # Tìm thấy! Mask này chứa điểm GT.
+                    # *** Ưu tiên 1: Thử "Dilated Point-in-Mask" (Kiểm tra vùng 5x5) ***
+                    window = mask_img[v_start:v_end, u_start:u_end]
+                    
+                    if np.any(window > 128):
+                        # Tìm thấy! Mask này "chạm" vào vùng GT.
                         best_mask_img = mask_img 
-                        break # Dừng tìm kiếm ngay lập tức
+                        found_by_pin = True
+                        break # Thoát ngay
+
+                    # *** Ưu tiên 2: Chuẩn bị dữ liệu cho "Fall-back" (so sánh tâm 2D) ***
+                    M = cv2.moments(mask_img)
+                    if M["m00"] == 0: continue
+                    
+                    mask_centroid_2d = np.array([M["m10"] / M["m00"], M["m01"] / M["m00"]])
+                    dist_2d = np.linalg.norm(mask_centroid_2d - gt_centroid_2d_flat)
+                    fallback_candidates.append({'mask': mask_img, 'dist': dist_2d})
 
                 except Exception as e:
                     print(f"Warning: Lỗi khi xử lý mask ứng cử viên {mask_path}: {e}")
                     continue
 
-            # 5. Kiểm tra lại sau khi lặp
-            if best_mask_img is None:
-                print(f"Warning: Không tìm thấy mask NPY nào chứa GT 2D ({u_gt}, {v_gt}) cho {base_name_for_files}. Bỏ qua...")
-                return None
+            # 6. Quyết định logic "Fall-back"
+            if not found_by_pin:
+                if not fallback_candidates:
+                    print(f"Warning: Không tìm thấy mask NPY hợp lệ nào (kể cả fall-back) cho {base_name_for_files}. Bỏ qua...")
+                    return None
+                
+                fallback_candidates.sort(key=lambda x: x['dist'])
+                best_mask_img = fallback_candidates[0]['mask']
             
+            # ===========================================================
+            # *** KẾT THÚC SỬA ĐỔI ***
+            # ===========================================================
             
-            # 6. Trích xuất Point Cloud từ mask 2D TỐT NHẤT đã chọn
+            # 7. Trích xuất Point Cloud
             points_3d = get_point_cloud_from_mask(
                 best_mask_img, depth_img,
                 self.depth_intr, self.color_intr, self.R_d2c, self.t_d2c
@@ -195,24 +219,24 @@ class ParcelDataset(Dataset):
                 print(f"Warning: Quá ít điểm ({len(points_3d)}) cho {image_name_gt} từ MASK NPY đã chọn. Bỏ qua...")
                 return None
 
-            # 7. Chuẩn hóa (Normalize)
+            # 8. Chuẩn hóa (Normalize)
             gt_centroid_norm = gt_centroid_world
             if self.normalize:
                 points_3d, scale, offset = normalize_point_cloud(points_3d)
                 gt_centroid_norm = (gt_centroid_world - offset) * scale
 
-            # 8. Sample/Pad điểm
+            # 9. Sample/Pad điểm
             if len(points_3d) > self.num_points:
                 indices = np.random.choice(len(points_3d), self.num_points, replace=False)
             else:
                 indices = np.random.choice(len(points_3d), self.num_points, replace=True)
             points_sampled = points_3d[indices]
 
-            # 9. Tính toán GT offset
+            # 10. Tính toán GT offset
             gt_centroid_norm_expanded = np.expand_dims(gt_centroid_norm, axis=0)
             gt_offset = gt_centroid_norm_expanded - points_sampled
 
-            # 10. Xử lý GT Quaternion
+            # 11. Xử lý GT Quaternion
             gt_quat_norm = gt_quat / (np.linalg.norm(gt_quat) + 1e-8)
             gt_quat_per_point = np.tile(gt_quat_norm, (self.num_points, 1))
 
@@ -228,7 +252,9 @@ class ParcelDataset(Dataset):
             print(f"Lỗi nghiêm trọng khi xử lý {item_name}: {e}. Bỏ qua...")
             return None
 
-
+# ============================================================
+# Training Function (Không đổi)
+# ============================================================
 def train_ps6d(model, train_loader, val_loader, num_epochs, lr, device, save_dir):
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)

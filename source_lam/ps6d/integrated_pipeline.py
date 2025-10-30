@@ -285,7 +285,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
 if __name__ == "__main__":
     MODEL_PATH = "/content/checkpoints/ps6d_best.pth"
-    BASE_DATA_PATH = "/content/drive/MyDrive/ViettelAIRace/train"
+    BASE_DATA_PATH = "/content/drive/MyDrive/ViettelAIRace/Train"
     MASK_DIR = "/content/drive/MyDrive/ViettelAIRace/yolact_result_train"
     OUTPUT_CSV = "submission_ps6d.csv"
 
