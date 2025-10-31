@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation as R
 import open3d as o3d
 
 # ============================================================
-# PointNet++ Basic Modules 
+# PointNet++ Basic Modules
 # ============================================================
 
 def square_distance(src, dst):
@@ -333,7 +333,7 @@ class PS6DLoss(nn.Module):
             # Do dataset (ps6d_dataset.py) không cung cấp metadata (model_points, v.v.)
             # chúng ta không thể gọi hàm `rotation_loss_full_symmetry`.
             # Thay vào đó, chúng ta dùng L1 loss đơn giản trên quaternion.
-            
+
             # gt_quat từ dataset có shape [B, N, 4], giống pred_quat
             loss_r = F.l1_loss(pred_quat, gt_quat)
 
@@ -347,5 +347,5 @@ class PS6DLoss(nn.Module):
 
         # Trả về loss (Sửa loss_rotation để trả về .item() hoặc 0.0)
         loss_r_item = loss_r.item() if isinstance(loss_r, torch.Tensor) else 0.0
-        
+
         return total_loss, {'loss_translation': loss_t.item(), 'loss_rotation': loss_r_item}

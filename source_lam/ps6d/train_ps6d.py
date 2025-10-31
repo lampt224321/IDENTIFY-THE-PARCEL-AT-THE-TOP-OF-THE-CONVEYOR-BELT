@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import os
 
-# Camera intrinsics (Không đổi)
+# Camera intrinsics 
 color_intrinsics = {
     'width': 1280, 'height': 720,
     'fx': 643.90087890625, 'fy': 643.1365356445312,
@@ -26,7 +26,7 @@ R_depth_to_color = np.array([
 
 t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 
-# Hàm collate_fn (Không đổi)
+# Hàm collate_fn 
 def collate_fn(batch):
     """
     Lọc ra các sample bị None (do lỗi load)
@@ -37,20 +37,19 @@ def collate_fn(batch):
     return torch.utils.data.default_collate(batch)
 
 def main():
-    # *** THAY ĐỔI: Cập nhật đường dẫn MASK ***
     base_path = r"/content/drive/MyDrive/ViettelAIRace/Train"
-    # Thay 'yolo_txt_dir' bằng 'mask_dir'
-    mask_dir = r"/content/drive/MyDrive/ViettelAIRace/yolact_result_train"
+    # Dùng mask YOLACT để huấn luyện
+    mask_dir = r"/content/drive/MyDrive/ViettelAIRace/yolact_result_train" 
     gt_csv_path = r"/content/drive/MyDrive/ViettelAIRace/Train/Public_train.csv"
-    save_dir = '/content/checkpoints'
+    save_dir = '/content/drive/MyDrive/ViettelAIRace/ps6dmodel/conttrain'
+    model_path = os.path.join(save_dir, 'ps6d_best.pth') 
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    # *** THAY ĐỔI: Cập nhật tham số của ParcelDataset ***
     dataset = ParcelDataset(
         base_path=base_path,
-        mask_dir=mask_dir, # <<< Đã thay đổi
+        mask_dir=mask_dir,
         gt_csv_path=gt_csv_path,
         num_points=1024,
         color_intrinsics=color_intrinsics,
@@ -62,7 +61,7 @@ def main():
 
     print(f"Total samples: {len(dataset)}")
 
-    # Chia Train/Val
+    # Chia Train/Val (Không đổi)
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
@@ -73,7 +72,7 @@ def main():
     print(f"Train samples: {len(train_dataset)}")
     print(f"Val samples: {len(val_dataset)}")
 
-    # Tạo DataLoader (Không đổi, vẫn dùng collate_fn)
+    # Tạo DataLoader (Không đổi)
     train_loader = DataLoader(
         train_dataset,
         batch_size=8,
@@ -92,20 +91,42 @@ def main():
         collate_fn=collate_fn
     )
 
-    model = PS6DNetwork(num_points=1024, feature_dim=128)
+    # ===========================================================
+    # *** BẮT ĐẦU SỬA ĐỔI (LOGIC FINE-TUNE) ***
+    # ===========================================================
 
+    # 1. Khởi tạo model
+    model = PS6DNetwork(num_points=1024, feature_dim=128)
+    
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"\nUsing device: {device}")
 
+    # 2. Tải lại checkpoint tốt nhất (ps6d_best.pth) nếu có
+    if os.path.exists(model_path):
+        print(f"Đang tải lại model tốt nhất từ: {model_path} để fine-tune...")
+        try:
+            checkpoint = torch.load(model_path, map_location=device)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"Tải thành công model có Val Loss: {checkpoint.get('loss', 'Không rõ')}")
+        except Exception as e:
+            print(f"Lỗi khi tải checkpoint: {e}. Huấn luyện từ đầu.")
+    else:
+        # Nếu bạn lỡ tay xóa file best.pth, nó sẽ tự huấn luyện từ đầu
+        print("Không tìm thấy model checkpoint, huấn luyện từ đầu.")
+        
+    # 3. Gọi hàm huấn luyện với Learning Rate (LR) thấp hơn
     model = train_ps6d(
         model,
         train_loader,
         val_loader,
-        num_epochs=100,
-        lr=0.001,
+        num_epochs=100,      
+        lr=0.0001,           
         device=device,
         save_dir=save_dir
     )
+    # ===========================================================
+    # *** KẾT THÚC SỬA ĐỔI ***
+    # ===========================================================
 
     print("\n✅ Training hoàn tất!")
 

@@ -124,9 +124,6 @@ class ParcelDataset(Dataset):
             
             H, W = depth_img.shape[:2]
 
-            # ===========================================================
-            # *** BẮT ĐẦU SỬA ĐỔI LOGIC CHỌN MASK (Dilated PiM + Fall-back) ***
-            # ===========================================================
             
             # 4. Tìm tất cả các mask .NPY ứng cử viên
             mask_search_pattern = os.path.join(self.npy_mask_dir, base_name_for_files + "_*.npy")
@@ -149,18 +146,14 @@ class ParcelDataset(Dataset):
 
             fallback_candidates = []
             
-            # *** ĐỊNH NGHĨA VÙNG MỞ RỘNG (DILATION) ***
-            # Dùng 5x5 (radius=2)
-            # (Bạn có thể đổi radius=1 để dùng 3x3 nếu 5x5 quá lỏng lẻo)
-            radius = 2 
+            # *** SỬA ĐỔI: Dùng 3x3 (radius=1) ***
+            radius = 1 
             v_start = max(0, v_gt - radius)
             v_end = min(H, v_gt + radius + 1)
             u_start = max(0, u_gt - radius)
             u_end = min(W, u_gt + radius + 1)
             
-            # Tọa độ gốc 2D (cho fall-back)
             gt_centroid_2d_flat = np.array([u_gt, v_gt])
-
 
             for mask_path in candidate_mask_files:
                 try:
@@ -175,14 +168,13 @@ class ParcelDataset(Dataset):
                     if mask_img.shape[0] != H or mask_img.shape[1] != W:
                          mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
 
-                    # *** Ưu tiên 1: Thử "Dilated Point-in-Mask" (Kiểm tra vùng 5x5) ***
+                    # *** Ưu tiên 1: Thử "Dilated Point-in-Mask" (Kiểm tra vùng 3x3) ***
                     window = mask_img[v_start:v_end, u_start:u_end]
                     
                     if np.any(window > 128):
-                        # Tìm thấy! Mask này "chạm" vào vùng GT.
                         best_mask_img = mask_img 
                         found_by_pin = True
-                        break # Thoát ngay
+                        break 
 
                     # *** Ưu tiên 2: Chuẩn bị dữ liệu cho "Fall-back" (so sánh tâm 2D) ***
                     M = cv2.moments(mask_img)
@@ -205,9 +197,6 @@ class ParcelDataset(Dataset):
                 fallback_candidates.sort(key=lambda x: x['dist'])
                 best_mask_img = fallback_candidates[0]['mask']
             
-            # ===========================================================
-            # *** KẾT THÚC SỬA ĐỔI ***
-            # ===========================================================
             
             # 7. Trích xuất Point Cloud
             points_3d = get_point_cloud_from_mask(
