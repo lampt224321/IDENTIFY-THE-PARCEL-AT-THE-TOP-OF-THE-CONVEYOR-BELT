@@ -40,23 +40,22 @@ class PS6DInference:
         if len(points_3d) < 50:
             return None, 0.0
         points_norm, scale, offset = self.normalize_point_cloud(points_3d)
-        # np.random.choice sẽ bị ảnh hưởng bởi seed
         if len(points_norm) > self.num_points:
             indices = np.random.choice(len(points_norm), self.num_points, replace=False)
         else:
             indices = np.random.choice(len(points_norm), self.num_points, replace=True)
         points_sampled = points_norm[indices]
         points_tensor = torch.FloatTensor(points_sampled).unsqueeze(0).to(self.device)
-        
+
         with torch.no_grad():
-            pred_offset, pred_quat = self.model(points_tensor) 
-            
+            pred_offset, pred_quat = self.model(points_tensor)
+
         pred_centroids = points_tensor[0] + pred_offset[0]
         centroid_norm = pred_centroids.mean(dim=0).cpu().numpy()
         centroid = self.denormalize_centroid(centroid_norm, scale, offset)
         variance = pred_centroids.var(dim=0).mean().cpu().item()
         confidence = np.exp(-variance * 10)
-        
+
         return centroid, confidence
 
 # ============================================================
@@ -64,16 +63,13 @@ class PS6DInference:
 # ============================================================
 def project_3d_to_2d(p3d, intr):
     x, y, z = p3d[0], p3d[1], p3d[2]
-    if z < 1e-5: 
+    if z < 1e-5:
         return None
     u = (x * intr['fx'] / z) + intr['cx']
     v = (y * intr['fy'] / z) + intr['cy']
     return np.array([u, v])
 
 def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t):
-    """
-    Trích xuất TOÀN BỘ point cloud từ mask (KHÔNG LỌC ROI).
-    """
     if mask_img.shape != depth_img.shape:
         mask_img = cv2.resize(mask_img, (depth_img.shape[1], depth_img.shape[0]), interpolation=cv2.INTER_NEAREST)
     v, u = np.where(mask_img > 128)
@@ -117,14 +113,13 @@ R_depth_to_color = np.array([
 t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 
 # ============================================================
-# Main Pipeline (*** THÊM RANDOM SEED ***)
+# Main Pipeline (*** CẬP NHẬT LOGIC LỌC OVERLAP ***)
 # ============================================================
 
 def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submission_ps6d.csv"):
-    
-    # *** THÊM DÒNG NÀY ĐỂ CỐ ĐỊNH KẾT QUẢ ***
+
     np.random.seed(42)
-    
+
     try:
         ps6d = PS6DInference(model_path, device='cuda' if torch.cuda.is_available() else 'cpu')
     except FileNotFoundError:
@@ -142,7 +137,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
     for rgb_path, depth_path in zip(rgb_files, depth_files):
         IMAGE_FILENAME = os.path.basename(rgb_path)
-        BASE_NAME = os.path.splitext(IMAGE_FILENAME)[0] 
+        BASE_NAME = os.path.splitext(IMAGE_FILENAME)[0]
 
         print(f"\n{'='*50}")
         print(f"ĐANG XỬ LÝ ẢNH: {IMAGE_FILENAME}")
@@ -156,6 +151,8 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
             all_final_outputs.append((IMAGE_FILENAME, None, None, None))
             continue
 
+        H, W = depth.shape[:2] # Lấy kích thước ảnh
+
         mask_search_pattern = os.path.join(mask_dir, "masks", BASE_NAME + "_*.npy")
         individual_mask_files = sorted(glob.glob(mask_search_pattern))
 
@@ -163,12 +160,16 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
             print(f"  -> Lỗi: Không tìm thấy file MASK NPY nào với mẫu {mask_search_pattern}")
             all_final_outputs.append((IMAGE_FILENAME, None, None, None))
             continue
-            
+
         print(f"Tìm thấy {len(individual_mask_files)} mask .npy.")
 
         candidate_results = []
-        
-        # Logic lọc ROI (Không đổi)
+
+        # Tạo một mask ROI (ảnh đen với hình chữ nhật trắng)
+        # Sẽ được dùng để kiểm tra overlap
+        roi_mask_img = np.zeros((H, W), dtype=np.uint8)
+        cv2.rectangle(roi_mask_img, (u_min, v_min), (u_max, v_max), 255, -1)
+
         for i, mask_file_path in enumerate(individual_mask_files):
             try:
                 mask_instance = np.load(mask_file_path)
@@ -183,6 +184,35 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 else:
                     mask_img = (mask_instance > 0.5).astype(np.uint8) * 255
 
+                if mask_img.shape[0] != H or mask_img.shape[1] != W:
+                    mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
+
+                # ===========================================================
+                # *** BẮT ĐẦU SỬA ĐỔI (KIỂM TRA OVERLAP) ***
+                # ===========================================================
+
+                # 1. Đếm tổng số pixel của mask
+                total_pixels = np.sum(mask_img > 128)
+                if total_pixels < 100: # Bỏ qua nếu mask quá nhỏ
+                    continue
+
+                # 2. Tính toán giao (intersection) giữa mask và ROI
+                intersection = cv2.bitwise_and(mask_img, roi_mask_img)
+                intersection_pixels = np.sum(intersection > 128)
+
+                # 3. Tính tỷ lệ overlap
+                overlap_ratio = intersection_pixels / total_pixels
+
+                # 4. Lọc: Yêu cầu ít nhất 50% mask phải nằm trong ROI
+                MIN_OVERLAP_RATIO = 0.5
+                if overlap_ratio < MIN_OVERLAP_RATIO:
+                    print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Overlap {overlap_ratio*100:.1f}% < {MIN_OVERLAP_RATIO*100}%)")
+                    continue
+
+                # ===========================================================
+                # *** KẾT THÚC SỬA ĐỔI ***
+                # ===========================================================
+
                 points_3d = get_point_cloud_from_mask(
                     mask_img, depth,
                     depth_intrinsics, color_intrinsics,
@@ -190,19 +220,20 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 )
                 if len(points_3d) < 100:
                     continue
-                
+
                 centroid, confidence = ps6d.predict_centroid(points_3d)
                 if centroid is None:
                     continue
 
+                # Lọc tâm 2D (vẫn giữ lại)
                 centroid_2d = project_3d_to_2d(centroid, color_intrinsics)
                 if centroid_2d is None:
                     print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Tâm 3D có Z=0)")
                     continue
-                
+
                 u_pred, v_pred = centroid_2d
                 if not (u_min <= u_pred < u_max and v_min <= v_pred < v_max):
-                    print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Tâm 2D ({u_pred:.0f}, {v_pred:.0f}) nằm ngoài ROI)")
+                    print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Tâm 2D ({u_pred:.0f}, {v_pred:.0f}) nằm ngoài ROI, dù overlap đủ)")
                     continue
 
                 candidate_results.append({
@@ -219,20 +250,20 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
         # Logic chọn MASK tốt nhất (Không đổi)
         if len(candidate_results) == 0:
-            print("[KẾT QUẢ]: Không có ứng cử viên hợp lệ (Tất cả đã bị lọc bởi ROI)")
+            print("[KẾT QUẢ]: Không có ứng cử viên hợp lệ (Tất cả đã bị lọc bởi ROI / Overlap)")
             all_final_outputs.append((IMAGE_FILENAME, None, None, None))
             continue
 
         # Ưu tiên 1: Sắp xếp theo Z (gần nhất)
         candidate_results.sort(key=lambda x: x['centroid'][2])
-        
+
         z_min = candidate_results[0]['centroid'][2]
         tie_group = [c for c in candidate_results if abs(c['centroid'][2] - z_min) < 0.005] # 5mm
 
         if len(tie_group) > 1:
             # Ưu tiên 2: Xử lý đồng hạng bằng tọa độ X (bé nhất)
-            tie_group.sort(key=lambda x: x['centroid'][0]) 
-            
+            tie_group.sort(key=lambda x: x['centroid'][0])
+
             selected = tie_group[0]
             print(f"  -> Nhiều ứng cử viên gần nhau, chọn file {selected['file_name']} theo tọa độ X (bé nhất).")
         else:
@@ -259,7 +290,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 # ============================================================
 
 if __name__ == "__main__":
-    MODEL_PATH = "/content/checkpoints/ps6d_best.pth"
+    MODEL_PATH = "/content/drive/MyDrive/ViettelAIRace/ps6dmodel/conttrain/ps6d_best.pth"
     BASE_DATA_PATH = "/content/drive/MyDrive/ViettelAIRace/Train"
     MASK_DIR = "/content/drive/MyDrive/ViettelAIRace/yolact_result_train"
     OUTPUT_CSV = "submission_ps6d.csv"
