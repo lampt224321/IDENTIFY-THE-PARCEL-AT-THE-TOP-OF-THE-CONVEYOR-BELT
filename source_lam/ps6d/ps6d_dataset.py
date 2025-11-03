@@ -62,7 +62,7 @@ class ParcelDataset(Dataset):
                  color_intrinsics, depth_intrinsics, R_d2c, t_d2c, normalize=True):
 
         self.base_path = base_path
-        self.mask_dir = mask_dir 
+        self.mask_dir = mask_dir
         self.gt_df = pd.read_csv(gt_csv_path)
         self.num_points = num_points
         self.color_intr = color_intrinsics
@@ -121,10 +121,10 @@ class ParcelDataset(Dataset):
             if depth_img is None:
                 print(f"Warning: Không thể load ảnh {depth_path}. Bỏ qua...")
                 return None
-            
+
             H, W = depth_img.shape[:2]
 
-            
+
             # 4. Tìm tất cả các mask .NPY ứng cử viên
             mask_search_pattern = os.path.join(self.npy_mask_dir, base_name_for_files + "_*.npy")
             candidate_mask_files = sorted(glob.glob(mask_search_pattern))
@@ -136,23 +136,23 @@ class ParcelDataset(Dataset):
             # 5. Logic ghép cặp
             best_mask_img = None
             found_by_pin = False
-            
+
             u_gt = int(round(gt_centroid_2d[0]))
             v_gt = int(round(gt_centroid_2d[1]))
-            
+
             if not (0 <= v_gt < H and 0 <= u_gt < W):
                 print(f"Warning: Tọa độ GT 2D ({u_gt}, {v_gt}) nằm ngoài ảnh {base_name_for_files}. Bỏ qua...")
                 return None
 
             fallback_candidates = []
-            
+
             # *** SỬA ĐỔI: Dùng 3x3 (radius=1) ***
-            radius = 1 
+            radius = 1
             v_start = max(0, v_gt - radius)
             v_end = min(H, v_gt + radius + 1)
             u_start = max(0, u_gt - radius)
             u_end = min(W, u_gt + radius + 1)
-            
+
             gt_centroid_2d_flat = np.array([u_gt, v_gt])
 
             for mask_path in candidate_mask_files:
@@ -164,22 +164,22 @@ class ParcelDataset(Dataset):
                         mask_img = (mask_instance).astype(np.uint8) * 255
                     else:
                         mask_img = (mask_instance > 0.5).astype(np.uint8) * 255
-                    
+
                     if mask_img.shape[0] != H or mask_img.shape[1] != W:
                          mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
 
                     # *** Ưu tiên 1: Thử "Dilated Point-in-Mask" (Kiểm tra vùng 3x3) ***
                     window = mask_img[v_start:v_end, u_start:u_end]
-                    
+
                     if np.any(window > 128):
-                        best_mask_img = mask_img 
+                        best_mask_img = mask_img
                         found_by_pin = True
-                        break 
+                        break
 
                     # *** Ưu tiên 2: Chuẩn bị dữ liệu cho "Fall-back" (so sánh tâm 2D) ***
                     M = cv2.moments(mask_img)
                     if M["m00"] == 0: continue
-                    
+
                     mask_centroid_2d = np.array([M["m10"] / M["m00"], M["m01"] / M["m00"]])
                     dist_2d = np.linalg.norm(mask_centroid_2d - gt_centroid_2d_flat)
                     fallback_candidates.append({'mask': mask_img, 'dist': dist_2d})
@@ -193,17 +193,17 @@ class ParcelDataset(Dataset):
                 if not fallback_candidates:
                     print(f"Warning: Không tìm thấy mask NPY hợp lệ nào (kể cả fall-back) cho {base_name_for_files}. Bỏ qua...")
                     return None
-                
+
                 fallback_candidates.sort(key=lambda x: x['dist'])
                 best_mask_img = fallback_candidates[0]['mask']
-            
-            
+
+
             # 7. Trích xuất Point Cloud
             points_3d = get_point_cloud_from_mask(
                 best_mask_img, depth_img,
                 self.depth_intr, self.color_intr, self.R_d2c, self.t_d2c
             )
-            
+
             if len(points_3d) < 50:
                 print(f"Warning: Quá ít điểm ({len(points_3d)}) cho {image_name_gt} từ MASK NPY đã chọn. Bỏ qua...")
                 return None

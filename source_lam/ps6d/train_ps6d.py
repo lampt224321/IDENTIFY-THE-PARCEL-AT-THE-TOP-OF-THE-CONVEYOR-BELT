@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import os
 
-# Camera intrinsics 
+# Camera intrinsics
 color_intrinsics = {
     'width': 1280, 'height': 720,
     'fx': 643.90087890625, 'fy': 643.1365356445312,
@@ -26,7 +26,7 @@ R_depth_to_color = np.array([
 
 t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 
-# Hàm collate_fn 
+# Hàm collate_fn
 def collate_fn(batch):
     """
     Lọc ra các sample bị None (do lỗi load)
@@ -39,10 +39,10 @@ def collate_fn(batch):
 def main():
     base_path = r"/content/drive/MyDrive/ViettelAIRace/Train"
     # Dùng mask YOLACT để huấn luyện
-    mask_dir = r"/content/drive/MyDrive/ViettelAIRace/yolact_result_train" 
+    mask_dir = r"/content/drive/MyDrive/ViettelAIRace/yolact_result_train"
     gt_csv_path = r"/content/drive/MyDrive/ViettelAIRace/Train/Public_train.csv"
     save_dir = '/content/drive/MyDrive/ViettelAIRace/ps6dmodel/conttrain'
-    model_path = os.path.join(save_dir, 'ps6d_best.pth') 
+    model_path = os.path.join(save_dir, 'ps6d_best.pth')
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -97,7 +97,7 @@ def main():
 
     # 1. Khởi tạo model
     model = PS6DNetwork(num_points=1024, feature_dim=128)
-    
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"\nUsing device: {device}")
 
@@ -113,14 +113,14 @@ def main():
     else:
         # Nếu bạn lỡ tay xóa file best.pth, nó sẽ tự huấn luyện từ đầu
         print("Không tìm thấy model checkpoint, huấn luyện từ đầu.")
-        
+
     # 3. Gọi hàm huấn luyện với Learning Rate (LR) thấp hơn
     model = train_ps6d(
         model,
         train_loader,
         val_loader,
-        num_epochs=100,      
-        lr=0.0001,           
+        num_epochs=100,
+        lr=0.0001,
         device=device,
         save_dir=save_dir
     )
