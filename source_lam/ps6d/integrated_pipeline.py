@@ -1,20 +1,23 @@
 import numpy as np
 import cv2
 import torch
+import torch.nn.functional as F
 import open3d as o3d
 import os
 import glob
 import pandas as pd
 from ps6d_model import PS6DNetwork
+from sklearn.cluster import DBSCAN
 
 # ============================================================
-# PS6D Inference Class (Không đổi)
+# PS6D Inference Class 
 # ============================================================
 
 class PS6DInference:
     def __init__(self, model_path, device='cuda', num_points=1024):
         self.device = device
         self.num_points = num_points
+        # Khởi tạo model 3-output mới
         self.model = PS6DNetwork(num_points=num_points, feature_dim=128)
         if not os.path.exists(model_path):
              print(f"LỖI: Không tìm thấy model checkpoint tại {model_path}")
@@ -36,10 +39,12 @@ class PS6DInference:
     def denormalize_centroid(self, normalized_centroid, scale, offset):
         return normalized_centroid / scale + offset
 
-    def predict_centroid(self, points_3d):
+    def predict_pose(self, points_3d):
         if len(points_3d) < 50:
-            return None, 0.0
+            return None, None, 0.0
+
         points_norm, scale, offset = self.normalize_point_cloud(points_3d)
+
         if len(points_norm) > self.num_points:
             indices = np.random.choice(len(points_norm), self.num_points, replace=False)
         else:
@@ -48,18 +53,65 @@ class PS6DInference:
         points_tensor = torch.FloatTensor(points_sampled).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            pred_offset, pred_quat = self.model(points_tensor)
+            # Model trả về (offset, normal_vector)
+            pred_offset, pred_normal = self.model(points_tensor)
 
-        pred_centroids = points_tensor[0] + pred_offset[0]
-        centroid_norm = pred_centroids.mean(dim=0).cpu().numpy()
+        pred_centroids_torch = points_tensor[0] + pred_offset[0]
+        pred_normals_torch = pred_normal[0]
+        pred_centroids_np = pred_centroids_torch.cpu().numpy()
+
+        centroid_norm = None
+        normal_vector_norm = None
+        variance = 1e6 # Mặc định confidence thấp
+
+        try:
+            # Chạy DBSCAN
+            clustering = DBSCAN(eps=0.01, min_samples=50).fit(pred_centroids_np)
+            labels = clustering.labels_
+
+            unique_labels, counts = np.unique(labels[labels != -1], return_counts=True)
+
+            if len(counts) > 0:
+                # Tìm cụm lớn nhất
+                largest_cluster_label = unique_labels[counts.argmax()]
+                inlier_mask = (labels == largest_cluster_label)
+
+                # Tính trung bình TÂM VÀ VECTOR PHÁP TUYẾN chỉ trên cụm lớn nhất
+                inlier_votes_centroids = pred_centroids_torch[inlier_mask]
+                inlier_votes_normals = pred_normals_torch[inlier_mask]
+
+                centroid_norm_torch = inlier_votes_centroids.mean(dim=0)
+                variance_torch = inlier_votes_centroids.var(dim=0).mean()
+
+                # Tính trung bình vector pháp tuyến và chuẩn hóa lại
+                normal_vector_norm_torch = inlier_votes_normals.mean(dim=0)
+                normal_vector_norm_torch = F.normalize(normal_vector_norm_torch, p=2, dim=-1)
+
+                centroid_norm = centroid_norm_torch.cpu().numpy()
+                normal_vector_norm = normal_vector_norm_torch.cpu().numpy()
+                variance = variance_torch.cpu().item()
+            else:
+                # Fall-back
+                centroid_norm = pred_centroids_torch.mean(dim=0).cpu().numpy()
+                normal_vector_norm_torch = F.normalize(pred_normals_torch.mean(dim=0), p=2, dim=-1)
+                normal_vector_norm = normal_vector_norm_torch.cpu().numpy()
+                variance = pred_centroids_torch.var(dim=0).mean().cpu().item()
+
+        except Exception:
+            # Fall-back an toàn
+            centroid_norm = pred_centroids_torch.mean(dim=0).cpu().numpy()
+            normal_vector_norm_torch = F.normalize(pred_normals_torch.mean(dim=0), p=2, dim=-1)
+            normal_vector_norm = normal_vector_norm_torch.cpu().numpy()
+            variance = pred_centroids_torch.var(dim=0).mean().cpu().item()
+
         centroid = self.denormalize_centroid(centroid_norm, scale, offset)
-        variance = pred_centroids.var(dim=0).mean().cpu().item()
         confidence = np.exp(-variance * 10)
 
-        return centroid, confidence
+        # Trả về 3 giá trị
+        return centroid, normal_vector_norm, confidence
 
 # ============================================================
-# HELPER FUNCTIONS (Không đổi)
+# HELPER FUNCTIONS 
 # ============================================================
 def project_3d_to_2d(p3d, intr):
     x, y, z = p3d[0], p3d[1], p3d[2]
@@ -90,7 +142,7 @@ def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t)
     return points_color_valid
 
 # ============================================================
-# Camera Intrinsics & ROI (Không đổi)
+# Camera Intrinsics & ROI 
 # ============================================================
 
 ROI_BOX = (560, 150, 300, 330)
@@ -113,7 +165,7 @@ R_depth_to_color = np.array([
 t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 
 # ============================================================
-# Main Pipeline (*** CẬP NHẬT LOGIC LỌC OVERLAP ***)
+# Main Pipeline 
 # ============================================================
 
 def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submission_ps6d.csv"):
@@ -121,7 +173,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
     np.random.seed(42)
 
     try:
-        ps6d = PS6DInference(model_path, device='cuda' if torch.cuda.is_available() else 'cpu')
+        ps6d = PS6DInference(model_path, device='cuda' if torch.cuda.is_available() else 'cpu', num_points=2048)
     except FileNotFoundError:
         return
 
@@ -148,27 +200,27 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
         if depth is None or img is None:
             print(f"  -> Lỗi: Không load được ảnh")
-            all_final_outputs.append((IMAGE_FILENAME, None, None, None))
+            all_final_outputs.append((IMAGE_FILENAME, None, None, None, None, None, None))
             continue
 
-        H, W = depth.shape[:2] # Lấy kích thước ảnh
+        H, W = depth.shape[:2]
 
         mask_search_pattern = os.path.join(mask_dir, "masks", BASE_NAME + "_*.npy")
         individual_mask_files = sorted(glob.glob(mask_search_pattern))
 
         if not individual_mask_files:
             print(f"  -> Lỗi: Không tìm thấy file MASK NPY nào với mẫu {mask_search_pattern}")
-            all_final_outputs.append((IMAGE_FILENAME, None, None, None))
+            all_final_outputs.append((IMAGE_FILENAME, None, None, None, None, None, None))
             continue
 
         print(f"Tìm thấy {len(individual_mask_files)} mask .npy.")
 
         candidate_results = []
 
-        # Tạo một mask ROI (ảnh đen với hình chữ nhật trắng)
-        # Sẽ được dùng để kiểm tra overlap
         roi_mask_img = np.zeros((H, W), dtype=np.uint8)
         cv2.rectangle(roi_mask_img, (u_min, v_min), (u_max, v_max), 255, -1)
+
+        MIN_CONFIDENCE = 0.5
 
         for i, mask_file_path in enumerate(individual_mask_files):
             try:
@@ -187,31 +239,16 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 if mask_img.shape[0] != H or mask_img.shape[1] != W:
                     mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
 
-                # ===========================================================
-                # *** BẮT ĐẦU SỬA ĐỔI (KIỂM TRA OVERLAP) ***
-                # ===========================================================
-
-                # 1. Đếm tổng số pixel của mask
+                # Lọc Overlap 
                 total_pixels = np.sum(mask_img > 128)
-                if total_pixels < 100: # Bỏ qua nếu mask quá nhỏ
-                    continue
-
-                # 2. Tính toán giao (intersection) giữa mask và ROI
+                if total_pixels < 100: continue
                 intersection = cv2.bitwise_and(mask_img, roi_mask_img)
                 intersection_pixels = np.sum(intersection > 128)
-
-                # 3. Tính tỷ lệ overlap
                 overlap_ratio = intersection_pixels / total_pixels
-
-                # 4. Lọc: Yêu cầu ít nhất 50% mask phải nằm trong ROI
-                MIN_OVERLAP_RATIO = 0.5
+                MIN_OVERLAP_RATIO = 0.4
                 if overlap_ratio < MIN_OVERLAP_RATIO:
                     print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Overlap {overlap_ratio*100:.1f}% < {MIN_OVERLAP_RATIO*100}%)")
                     continue
-
-                # ===========================================================
-                # *** KẾT THÚC SỬA ĐỔI ***
-                # ===========================================================
 
                 points_3d = get_point_cloud_from_mask(
                     mask_img, depth,
@@ -221,11 +258,16 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 if len(points_3d) < 100:
                     continue
 
-                centroid, confidence = ps6d.predict_centroid(points_3d)
+                centroid, normal_vector, confidence = ps6d.predict_pose(points_3d)
+
                 if centroid is None:
                     continue
 
-                # Lọc tâm 2D (vẫn giữ lại)
+                if confidence < MIN_CONFIDENCE:
+                    print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Confidence {confidence:.2f} < {MIN_CONFIDENCE})")
+                    continue
+
+                # Lọc tâm 2D 
                 centroid_2d = project_3d_to_2d(centroid, color_intrinsics)
                 if centroid_2d is None:
                     print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Tâm 3D có Z=0)")
@@ -238,61 +280,61 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
                 candidate_results.append({
                     'centroid': centroid,
+                    'normal_vector': normal_vector, # <<< Thêm
                     'confidence': confidence,
                     'mask_index': i,
                     'file_name': os.path.basename(mask_file_path)
                 })
-                print(f"  File {os.path.basename(mask_file_path)}: ĐƯỢC CHỌN (Tâm PS6D = ({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}))")
+                print(f"  File {os.path.basename(mask_file_path)}: ĐƯỢC CHỌN (Tâm PS6D = ({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}), Conf: {confidence:.2f})")
 
             except Exception as e:
                 print(f"  -> Lỗi khi xử lý file mask {mask_file_path}: {e}")
 
 
-        # Logic chọn MASK tốt nhất (Không đổi)
+        # Logic chọn MASK tốt nhất 
         if len(candidate_results) == 0:
-            print("[KẾT QUẢ]: Không có ứng cử viên hợp lệ (Tất cả đã bị lọc bởi ROI / Overlap)")
-            all_final_outputs.append((IMAGE_FILENAME, None, None, None))
+            print("[KẾT QUẢ]: Không có ứng cử viên hợp lệ (Tất cả đã bị lọc bởi ROI / Overlap / Confidence)")
+            all_final_outputs.append((IMAGE_FILENAME, None, None, None, None, None, None))
             continue
 
-        # Ưu tiên 1: Sắp xếp theo Z (gần nhất)
         candidate_results.sort(key=lambda x: x['centroid'][2])
-
         z_min = candidate_results[0]['centroid'][2]
-        tie_group = [c for c in candidate_results if abs(c['centroid'][2] - z_min) < 0.005] # 5mm
+        tie_group = [c for c in candidate_results if abs(c['centroid'][2] - z_min) < 0.005]
 
         if len(tie_group) > 1:
-            # Ưu tiên 2: Xử lý đồng hạng bằng tọa độ X (bé nhất)
             tie_group.sort(key=lambda x: x['centroid'][0])
-
             selected = tie_group[0]
             print(f"  -> Nhiều ứng cử viên gần nhau, chọn file {selected['file_name']} theo tọa độ X (bé nhất).")
         else:
-            # Chỉ có 1 vật thể gần nhất
             selected = tie_group[0]
             print(f"  -> Chọn file {selected['file_name']} (gần nhất - Z min).")
 
         c = selected['centroid']
+        n = selected['normal_vector'] # <<< Lấy vector
+
         print(f"\n--- [KẾT QUẢ CUỐI CÙNG CHO ẢNH {IMAGE_FILENAME}] ---")
         print(f"  Tâm dự đoán (x, y, z): ({c[0]:.4f}, {c[1]:.4f}, {c[2]:.4f})")
+        print(f"  Pháp tuyến (nx, ny, nz): ({n[0]:.4f}, {n[1]:.4f}, {n[2]:.4f})")
         print(f"  Confidence: {selected['confidence']:.3f}")
-        all_final_outputs.append((IMAGE_FILENAME, c[0], c[1], c[2]))
+
+        all_final_outputs.append((IMAGE_FILENAME, c[0], c[1], c[2], n[0], n[1], n[2]))
 
     print("\n=== HOÀN TẤT QUÁ TRÌNH ===")
 
-    df = pd.DataFrame(all_final_outputs, columns=['image_filename', 'x', 'y', 'z'])
+    df = pd.DataFrame(all_final_outputs, columns=['image_filename', 'x', 'y', 'z', 'Rx', 'Ry', 'Rz'])
     df.to_csv(output_csv, index=False, float_format='%.6f')
     print(f"Đã lưu kết quả ra file: {output_csv}")
 
     return df
 
 # ============================================================
-# Usage Example (Không đổi)
+# Usage Example 
 # ============================================================
 
 if __name__ == "__main__":
-    MODEL_PATH = "/content/drive/MyDrive/ViettelAIRace/ps6dmodel/conttrain/ps6d_best.pth"
+    MODEL_PATH = "/content/drive/MyDrive/ViettelAIRace/ps6dmodel/testmodel/ps6d_best.pth"
     BASE_DATA_PATH = "/content/drive/MyDrive/ViettelAIRace/Train"
-    MASK_DIR = "/content/drive/MyDrive/ViettelAIRace/yolact_result_train"
+    MASK_DIR = "/content/drive/MyDrive/ViettelAIRace/yolact_result_new_train_public_v2"
     OUTPUT_CSV = "submission_ps6d.csv"
 
     results = main_pipeline_with_ps6d(
