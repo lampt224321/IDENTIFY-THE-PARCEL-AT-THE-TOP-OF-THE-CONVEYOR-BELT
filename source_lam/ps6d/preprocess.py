@@ -14,23 +14,17 @@ import glob
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
-def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, R, t, depth_scale=1000.0, z_min=0.01, z_max=5.0):
+def get_point_cloud_from_mask(
+    mask_img, 
+    depth_img, 
+    color_intr, # <<< SỬA LỖI LOGIC: Dùng thông số camera MÀU
+    depth_scale=1000.0, 
+    z_min=0.01, 
+    z_max=5.0
+):
     """
-    Tạo point cloud từ mask và depth map.
-
-    Parameters:
-        mask_img (np.ndarray): Ảnh mask (giá trị >128 là foreground).
-        depth_img (np.ndarray): Ảnh độ sâu (đơn vị mm hoặc m tùy depth_scale).
-        depth_intr (dict): Thông số nội tại camera depth, gồm {'fx', 'fy', 'cx', 'cy'}.
-        R (np.ndarray): Ma trận quay 3x3 từ depth sang color camera.
-        t (np.ndarray): Vector tịnh tiến 3x1 từ depth sang color camera.
-        depth_scale (float): Hệ số chia để chuyển sang mét (m).
-        z_min, z_max (float): Giới hạn khoảng cách hợp lệ (m).
-
-    Returns:
-        np.ndarray: Point cloud trong hệ toạ độ camera màu, dạng (N, 3).
+    Tạo point cloud từ mask (ảnh màu) và depth map (đã đăng ký).
     """
-    # Đảm bảo mask và depth cùng kích thước
     if mask_img.shape != depth_img.shape:
         mask_img = cv2.resize(mask_img, (depth_img.shape[1], depth_img.shape[0]), interpolation=cv2.INTER_NEAREST)
 
@@ -38,22 +32,25 @@ def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, R, t, depth_scale
     if len(u) == 0:
         return np.empty((0, 3), dtype=np.float32)
 
-    # Lấy giá trị độ sâu
+    # Lấy giá trị Z (độ sâu) tại các pixel (u,v)
     Z = depth_img[v, u].astype(np.float32) / depth_scale
+    
+    # Lọc các giá trị Z không hợp lệ
     valid = (Z > z_min) & (Z < z_max) & np.isfinite(Z)
     if not np.any(valid):
-        return np.empty((0, 3), dtype=np.float32)
+        return np.empty((0, 3), dtype=np.float32) # Trả về 0 nếu không có điểm hợp lệ
 
     u, v, Z = u[valid], v[valid], Z[valid]
-    X = (u - depth_intr['cx']) * Z / depth_intr['fx']
-    Y = (v - depth_intr['cy']) * Z / depth_intr['fy']
-    points_depth = np.stack((X, Y, Z), axis=-1)
 
-    # Đảm bảo R, t là numpy array
-    R = np.asarray(R, dtype=np.float32)
-    t = np.asarray(t, dtype=np.float32).reshape(1, 3)
+    # Tọa độ (u, v) đến từ MASK (ảnh MÀU), 
+    # vì vậy chúng ta phải dùng thông số của camera MÀU ('color_intr')
+    X = (u - color_intr['cx']) * Z / color_intr['fx']
+    Y = (v - color_intr['cy']) * Z / color_intr['fy']
 
-    return (R @ points_depth.T).T + t
+    # Đám mây điểm 3D này đã ở trong hệ tọa độ của camera MÀU.
+    points_color_space = np.stack((X, Y, Z), axis=-1)
+
+    return points_color_space
 
 
 def normalize_point_cloud(points):
@@ -91,35 +88,31 @@ class ParcelDataset(Dataset):
         self.rgb_dir = os.path.join(base_path, "rgb")
         self.depth_dir = os.path.join(base_path, "depth")
         self.npy_mask_dir = os.path.join(self.mask_dir, "masks")
-
-        if 'Rx' not in self.gt_df.columns:
-            self.has_rotation_gt = False
-        else:
-            self.has_rotation_gt = True
+        self.has_rotation_gt = 'Rx' in self.gt_df.columns
 
     def __len__(self):
         return len(self.gt_df)
 
     def __getitem__(self, idx):
-        gt_row = None
         try:
             # 1. Lấy Ground Truth
             gt_row = self.gt_df.iloc[idx]
-            image_name_gt = gt_row['image_filename']
+            image_name_gt = gt_row['image_filename'] # Dùng để debug
             gt_centroid_world = np.array([gt_row['x'], gt_row['y'], gt_row['z']], dtype=np.float32)
 
             # 2. Chiếu GT 3D sang 2D
             gt_centroid_2d = project_3d_to_2d(gt_centroid_world, self.color_intr)
             if gt_centroid_2d is None:
+                # print(f"LOG (idx {idx}, {image_name_gt}): Bỏ qua, GT 3D chiếu ra None")
                 return None
 
-            if image_name_gt.startswith('image_'):
-                actual_image_filename = image_name_gt[len('image_'):]
-            else:
-                actual_image_filename = image_name_gt
-            base_name_for_files = os.path.splitext(actual_image_filename)[0]
+            # === SỬA LỖI TÊN FILE ===
+            # Giả định idx=0 -> 0000.png, idx=81 -> 0081.png
+            base_name_for_files = f"{idx:04d}" 
+            actual_image_filename = f"{base_name_for_files}.png"
+            # === KẾT THÚC SỬA LỖI ===
 
-            # Lấy GT Rotation (Vector pháp tuyến)
+            # Lấy GT Rotation
             if self.has_rotation_gt:
                 gt_normal_vector = np.array([gt_row['Rx'], gt_row['Ry'], gt_row['Rz']], dtype=np.float32)
                 gt_normal_norm = gt_normal_vector / (np.linalg.norm(gt_normal_vector) + 1e-8)
@@ -130,27 +123,30 @@ class ParcelDataset(Dataset):
             depth_path = os.path.join(self.depth_dir, actual_image_filename)
             depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
             if depth_img is None:
+                print(f"LỖI (idx {idx}, {actual_image_filename}): Không tìm thấy file depth tại {depth_path}")
                 return None
 
             H, W = depth_img.shape[:2]
 
-            # 4. Tìm tất cả các mask .NPY ứng cử viên
+            # 4. Tìm các mask .NPY (Ví dụ: .../0000_*.npy)
             mask_search_pattern = os.path.join(self.npy_mask_dir, base_name_for_files + "_*.npy")
             candidate_mask_files = sorted(glob.glob(mask_search_pattern))
 
             if not candidate_mask_files:
+                print(f"LỖI (idx {idx}, {actual_image_filename}): Không tìm thấy file mask nào với mẫu {mask_search_pattern}")
                 return None
 
-            # 5. Logic ghép cặp (Logic "An toàn nhất")
+            # 5. Logic ghép cặp
             best_mask_img = None
             u_gt = int(round(gt_centroid_2d[0]))
             v_gt = int(round(gt_centroid_2d[1]))
             if not (0 <= v_gt < H and 0 <= u_gt < W):
+                print(f"LỖI (idx {idx}, {actual_image_filename}): GT 2D ({u_gt}, {v_gt}) nằm ngoài ảnh ({W}, {H})")
                 return None
 
             primary_candidates = []
             fallback_candidates = []
-            radius = 1 # 3x3
+            radius = 1 
             v_start = max(0, v_gt - radius); v_end = min(H, v_gt + radius + 1)
             u_start = max(0, u_gt - radius); u_end = min(W, u_gt + radius + 1)
             gt_centroid_2d_flat = np.array([u_gt, v_gt])
@@ -160,10 +156,7 @@ class ParcelDataset(Dataset):
                     mask_instance = np.load(mask_path)
                     if mask_instance.ndim != 2: continue
 
-                    if mask_instance.dtype == bool:
-                        mask_img = (mask_instance).astype(np.uint8) * 255
-                    else:
-                        mask_img = (mask_instance > 0.5).astype(np.uint8) * 255
+                    mask_img = (mask_instance > 0.5).astype(np.uint8) * 255
 
                     if mask_img.shape[0] != H or mask_img.shape[1] != W:
                          mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
@@ -190,17 +183,19 @@ class ParcelDataset(Dataset):
                 fallback_candidates.sort(key=lambda x: x['dist'])
                 best_mask_img = fallback_candidates[0]['mask']
             else:
+                print(f"LỖI (idx {idx}, {actual_image_filename}): Không có mask nào khớp (cả chính và phụ) với GT 2D ({u_gt}, {v_gt})")
                 return None
 
-            # 7. Trích xuất Point Cloud
+            # 7. Trích xuất Point Cloud (ĐÃ SỬA LỖI LOGIC)
             points_3d = get_point_cloud_from_mask(
                 best_mask_img, depth_img,
-                self.depth_intr, self.color_intr, self.R_d2c, self.t_d2c
+                self.color_intr # Chỉ cần truyền thông số MÀU
             )
             if len(points_3d) < 50:
+                print(f"LỖI (idx {idx}, {actual_image_filename}): Không đủ điểm 3D ({len(points_3d)} < 50). Khả năng cao file depth hỏng (toàn 0).")
                 return None
 
-            # 8. Chuẩn hóa (Normalize)
+            # 8. Chuẩn hóa
             gt_centroid_norm = gt_centroid_world
             if self.normalize:
                 points_3d, scale, offset = normalize_point_cloud(points_3d)
@@ -228,7 +223,8 @@ class ParcelDataset(Dataset):
             )
 
         except Exception as e:
-            return None
+            # print(f"LỖI CHƯA BIẾT (idx {idx}): {e}")
+            return None # Bật lại try...except
 
 # Hàm collate_fn
 def collate_fn(batch):
@@ -245,11 +241,9 @@ def main_preprocess():
     print("Bắt đầu quá trình Tiền xử lý (Preprocessing)...")
 
     base_path = r"/home/hp/VTAIRACE/source_lam/dataset/Train"
-    mask_dir = r"/home/hp/VTAIRACE/source_haanh/yolact_result_new_train_public_v2"
+    mask_dir = r"/home/hp/VTAIRACE/Code_Angie/masks_npy" 
     gt_csv_path = r"/home/hp/VTAIRACE/source_lam/dataset/Train/Public_train.csv"
-
     NUM_POINTS = 2048
-
     OUTPUT_DIR = "/home/hp/VTAIRACE/source_lam/ps6d/preprocessed_data"
 
     if os.path.exists(OUTPUT_DIR):
@@ -290,26 +284,25 @@ def main_preprocess():
         normalize=True
     )
 
-    # 2. Dùng DataLoader để tăng tốc tiền xử lý
+    # 2. Bật lại num_workers để chạy nhanh
     try:
         cpu_count = os.cpu_count()
         num_workers = max(1, cpu_count // 2)
     except:
-        num_workers = 4
+        num_workers = 8
 
     print(f"Sử dụng {num_workers} workers để tiền xử lý {len(dataset)} ảnh...")
 
     loader = DataLoader(dataset, batch_size=8, num_workers=num_workers, collate_fn=collate_fn)
 
     save_idx = 0
-    for batch_data in tqdm(loader, desc="Đang tiền xử lý"):
+    # Thêm 'total' vào tqdm để nó biết tổng số batch
+    for batch_data in tqdm(loader, desc="Đang tiền xử lý", total=len(loader)):
         if batch_data is None:
             continue
 
-        # Unpack batch
         points_batch, centroid_batch, offset_batch, normal_batch = batch_data
 
-        # Lưu từng sample trong batch ra file .pt riêng lẻ
         for i in range(points_batch.size(0)):
             sample = (
                 points_batch[i],
@@ -317,7 +310,6 @@ def main_preprocess():
                 offset_batch[i],
                 normal_batch[i]
             )
-            # Lưu bằng torch.save
             torch.save(sample, f"{OUTPUT_DIR}/sample_{save_idx}.pt")
             save_idx += 1
 

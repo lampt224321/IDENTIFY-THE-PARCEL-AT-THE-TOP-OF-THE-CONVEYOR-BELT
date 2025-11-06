@@ -82,7 +82,7 @@ def main():
         train_loader,
         val_loader,
         num_epochs=NUM_EPOCHS_TO_RUN,
-        lr=0.001,
+        lr=0.0001,
         device=device,
         save_dir=save_dir
     )
