@@ -31,6 +31,7 @@ requirements.txt~
 poetry.lock
 Pipfile.lock
 venv_ps6d/
+myenv/
 
 # ======================================================
 # 🧩 IDE / EDITOR
@@ -86,6 +87,7 @@ mlruns/
 *.db
 *.sqlite
 *.hdf5
+preprocessed_data/
 
 # ======================================================
 # 🖼️ IMAGE / VIDEO / TEMP
