@@ -334,7 +334,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 # ============================================================
 
 if __name__ == "__main__":
-    MODEL_PATH = "/home/hp/VTAIRACE/source_lam/ps6d/ps6dmodel/testmodel/ps6d_best.pth"
+    MODEL_PATH = "/home/hp/VTAIRACE/source_lam/ps6d/ps6dmodel/MCE+OE/ps6d_24d.pth"
     BASE_DATA_PATH = "/home/hp/VTAIRACE/source_lam/dataset/Train"
     MASK_DIR = "/home/hp/VTAIRACE/source_haanh/yolact_result_new_train_public_v2"
     OUTPUT_CSV = "Submission3D.csv"

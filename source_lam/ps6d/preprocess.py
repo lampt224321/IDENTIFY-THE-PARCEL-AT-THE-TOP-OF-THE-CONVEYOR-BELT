@@ -14,25 +14,47 @@ import glob
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
-def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t):
+def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, R, t, depth_scale=1000.0, z_min=0.01, z_max=5.0):
+    """
+    Tạo point cloud từ mask và depth map.
+
+    Parameters:
+        mask_img (np.ndarray): Ảnh mask (giá trị >128 là foreground).
+        depth_img (np.ndarray): Ảnh độ sâu (đơn vị mm hoặc m tùy depth_scale).
+        depth_intr (dict): Thông số nội tại camera depth, gồm {'fx', 'fy', 'cx', 'cy'}.
+        R (np.ndarray): Ma trận quay 3x3 từ depth sang color camera.
+        t (np.ndarray): Vector tịnh tiến 3x1 từ depth sang color camera.
+        depth_scale (float): Hệ số chia để chuyển sang mét (m).
+        z_min, z_max (float): Giới hạn khoảng cách hợp lệ (m).
+
+    Returns:
+        np.ndarray: Point cloud trong hệ toạ độ camera màu, dạng (N, 3).
+    """
+    # Đảm bảo mask và depth cùng kích thước
     if mask_img.shape != depth_img.shape:
         mask_img = cv2.resize(mask_img, (depth_img.shape[1], depth_img.shape[0]), interpolation=cv2.INTER_NEAREST)
+
     v, u = np.where(mask_img > 128)
     if len(u) == 0:
-        return np.array([])
-    Z_values = depth_img[v, u]
-    Z = Z_values.astype(np.float32) / 1000.0
-    valid_depth = (Z > 0.01) & (Z < 5.0) & np.isfinite(Z)
-    u_valid = u[valid_depth]
-    v_valid = v[valid_depth]
-    Z_valid = Z[valid_depth]
-    if len(u_valid) == 0:
-        return np.array([])
-    X = (u_valid - depth_intr['cx']) * Z_valid / depth_intr['fx']
-    Y = (v_valid - depth_intr['cy']) * Z_valid / depth_intr['fy']
-    points_depth_valid = np.stack((X, Y, Z_valid), axis=-1)
-    points_color_valid = (R @ points_depth_valid.T).T + t.reshape(1, 3)
-    return points_color_valid
+        return np.empty((0, 3), dtype=np.float32)
+
+    # Lấy giá trị độ sâu
+    Z = depth_img[v, u].astype(np.float32) / depth_scale
+    valid = (Z > z_min) & (Z < z_max) & np.isfinite(Z)
+    if not np.any(valid):
+        return np.empty((0, 3), dtype=np.float32)
+
+    u, v, Z = u[valid], v[valid], Z[valid]
+    X = (u - depth_intr['cx']) * Z / depth_intr['fx']
+    Y = (v - depth_intr['cy']) * Z / depth_intr['fy']
+    points_depth = np.stack((X, Y, Z), axis=-1)
+
+    # Đảm bảo R, t là numpy array
+    R = np.asarray(R, dtype=np.float32)
+    t = np.asarray(t, dtype=np.float32).reshape(1, 3)
+
+    return (R @ points_depth.T).T + t
+
 
 def normalize_point_cloud(points):
     centroid = np.mean(points, axis=0)
