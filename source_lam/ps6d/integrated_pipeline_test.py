@@ -10,7 +10,7 @@ from ps6d_model import PS6DNetwork
 from sklearn.cluster import DBSCAN
 
 # ============================================================
-# PS6D Inference Class 
+# PS6D Inference Class (*** SỬA ĐỔI ***)
 # ============================================================
 
 class PS6DInference:
@@ -39,7 +39,7 @@ class PS6DInference:
     def denormalize_centroid(self, normalized_centroid, scale, offset):
         return normalized_centroid / scale + offset
 
-    # *** logic DBSCAN ***
+    # *** SỬA ĐỔI: Tên hàm và logic DBSCAN ***
     def predict_pose(self, points_3d):
         if len(points_3d) < 50:
             return None, None, 0.0
@@ -112,7 +112,7 @@ class PS6DInference:
         return centroid, normal_vector_norm, confidence
 
 # ============================================================
-# HELPER FUNCTIONS 
+# HELPER FUNCTIONS (Không đổi)
 # ============================================================
 def project_3d_to_2d(p3d, intr):
     x, y, z = p3d[0], p3d[1], p3d[2]
@@ -143,7 +143,7 @@ def get_point_cloud_from_mask(mask_img, depth_img, depth_intr, color_intr, R, t)
     return points_color_valid
 
 # ============================================================
-# Camera Intrinsics & ROI 
+# Camera Intrinsics & ROI (Không đổi)
 # ============================================================
 
 ROI_BOX = (560, 150, 300, 330)
@@ -166,10 +166,10 @@ R_depth_to_color = np.array([
 t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 
 # ============================================================
-# Main Pipeline 
+# Main Pipeline (*** SỬA ĐỔI ***)
 # ============================================================
 
-def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submission_ps6d.csv"):
+def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submission_test.csv"):
 
     np.random.seed(42)
 
@@ -240,13 +240,13 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 if mask_img.shape[0] != H or mask_img.shape[1] != W:
                     mask_img = cv2.resize(mask_img, (W, H), interpolation=cv2.INTER_NEAREST)
 
-                # Lọc Overlap 
+                # Lọc Overlap (Không đổi)
                 total_pixels = np.sum(mask_img > 128)
                 if total_pixels < 100: continue
                 intersection = cv2.bitwise_and(mask_img, roi_mask_img)
                 intersection_pixels = np.sum(intersection > 128)
                 overlap_ratio = intersection_pixels / total_pixels
-                MIN_OVERLAP_RATIO = 0.4
+                MIN_OVERLAP_RATIO = 0.5
                 if overlap_ratio < MIN_OVERLAP_RATIO:
                     print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Overlap {overlap_ratio*100:.1f}% < {MIN_OVERLAP_RATIO*100}%)")
                     continue
@@ -259,6 +259,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 if len(points_3d) < 100:
                     continue
 
+                # *** SỬA ĐỔI: Gọi hàm mới ***
                 centroid, normal_vector, confidence = ps6d.predict_pose(points_3d)
 
                 if centroid is None:
@@ -268,7 +269,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                     print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Confidence {confidence:.2f} < {MIN_CONFIDENCE})")
                     continue
 
-                # Lọc tâm 2D 
+                # Lọc tâm 2D (Không đổi)
                 centroid_2d = project_3d_to_2d(centroid, color_intrinsics)
                 if centroid_2d is None:
                     print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Tâm 3D có Z=0)")
@@ -281,7 +282,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
                 candidate_results.append({
                     'centroid': centroid,
-                    'normal_vector': normal_vector, 
+                    'normal_vector': normal_vector, # <<< Thêm
                     'confidence': confidence,
                     'mask_index': i,
                     'file_name': os.path.basename(mask_file_path)
@@ -292,7 +293,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
                 print(f"  -> Lỗi khi xử lý file mask {mask_file_path}: {e}")
 
 
-        # Logic chọn MASK tốt nhất 
+        # Logic chọn MASK tốt nhất (Không đổi)
         if len(candidate_results) == 0:
             print("[KẾT QUẢ]: Không có ứng cử viên hợp lệ (Tất cả đã bị lọc bởi ROI / Overlap / Confidence)")
             all_final_outputs.append((IMAGE_FILENAME, None, None, None, None, None, None))
@@ -322,7 +323,7 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
 
     print("\n=== HOÀN TẤT QUÁ TRÌNH ===")
 
-    
+    # *** SỬA ĐỔI: Thêm 3 cột mới (Rx, Ry, Rz) ***
     df = pd.DataFrame(all_final_outputs, columns=['image_filename', 'x', 'y', 'z', 'Rx', 'Ry', 'Rz'])
     df.to_csv(output_csv, index=False, float_format='%.6f')
     print(f"Đã lưu kết quả ra file: {output_csv}")
@@ -330,14 +331,14 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="submiss
     return df
 
 # ============================================================
-# Usage Example
+# Usage Example (Không đổi)
 # ============================================================
 
 if __name__ == "__main__":
-    MODEL_PATH = "/home/hp/VTAIRACE/source_lam/ps6d/ps6dmodel/testmodel/ps6d_best.pth"
-    BASE_DATA_PATH = "/home/hp/VTAIRACE/source_lam/dataset/Train"
-    MASK_DIR = "/home/hp/VTAIRACE/source_haanh/yolact_result_new_train_public_v2"
-    OUTPUT_CSV = "Submission3D.csv"
+    MODEL_PATH = "/content/drive/MyDrive/ViettelAIRace/ps6dmodel/testmodel/ps6d_best.pth"
+    BASE_DATA_PATH = "/content/drive/MyDrive/ViettelAIRace/Test"
+    MASK_DIR = "/content/drive/MyDrive/ViettelAIRace/yolact_result_new_test_public_v2"
+    OUTPUT_CSV = "submission_test.csv"
 
     results = main_pipeline_with_ps6d(
         model_path=MODEL_PATH,

@@ -10,6 +10,8 @@ import time
 from scipy.spatial.transform import Rotation as R_scipy
 import open3d as o3d
 import glob
+
+# Import model và loss để hàm train_ps6d có thể sử dụng
 from ps6d_model import PS6DLoss, PS6DNetwork
 
 # ============================================================
@@ -20,7 +22,6 @@ class PreprocessedDataset(Dataset):
         """
         Khởi tạo Dataset. Chỉ cần trỏ đến thư mục dữ liệu đã tiền xử lý.
         """
-        # Tìm tất cả các file .pt đã được lưu
         self.data_files = sorted(glob.glob(os.path.join(data_dir, "*.pt")))
         print(f"Đã tìm thấy {len(self.data_files)} file dữ liệu đã tiền xử lý.")
 
@@ -28,19 +29,15 @@ class PreprocessedDataset(Dataset):
         return len(self.data_files)
 
     def __getitem__(self, idx):
-        """
-        Hàm này SIÊU NHANH: chỉ tải 1 file.
-        """
         try:
-            # Tải trực tiếp 4 tensor đã được xử lý
             data = torch.load(self.data_files[idx])
             return data
         except Exception as e:
-            print(f"Lỗi khi tải file {self.data_files[idx]}: {e}. Bỏ qua...")
+            # print(f"Lỗi khi tải file {self.data_files[idx]}: {e}. Bỏ qua...")
             return None
 
 # ============================================================
-# Training Function
+# Training Function 
 # ============================================================
 def train_ps6d(model, train_loader, val_loader, num_epochs, lr, device, save_dir):
     model = model.to(device)
@@ -48,6 +45,12 @@ def train_ps6d(model, train_loader, val_loader, num_epochs, lr, device, save_dir
 
     best_val_loss = float('inf')
     start_epoch = 0
+
+    history = {
+        'train_loss': [], 'val_loss': [],
+        'train_loss_t': [], 'val_loss_t': [],
+        'train_loss_r': [], 'val_loss_r': []
+    }
 
     model_path = os.path.join(save_dir, 'ps6d_best.pth')
 
@@ -72,12 +75,11 @@ def train_ps6d(model, train_loader, val_loader, num_epochs, lr, device, save_dir
     has_rotation_gt = True
 
     if has_rotation_gt:
-        weight_t = 2.33 # Tỷ lệ 70%
-        weight_r = 1.0  # Tỷ lệ 30%
-        print(f"Đang bật loss (T: {weight_t}, R: {weight_r}) - Ưu tiên MCE 70%")
+        weight_t = 4.0 # Tỷ lệ 80%
+        weight_r = 1.0  # Tỷ lệ 20%
+        print(f"Đang bật loss (T: {weight_t}, R: {weight_r}) - Ưu tiên MCE 80%")
         criterion = PS6DLoss(weight_translation=weight_t, weight_rotation=weight_r).to(device)
     else:
-        # (Fall-back, không bao giờ xảy ra với dataset mới)
         print("Đang tắt loss rotation (weight=0.0)")
         criterion = PS6DLoss(weight_translation=1.0, weight_rotation=0.0).to(device)
 
@@ -167,6 +169,13 @@ def train_ps6d(model, train_loader, val_loader, num_epochs, lr, device, save_dir
               f"Train Loss: {avg_train_loss:.4f} (T: {avg_train_loss_t:.4f}, R: {avg_train_loss_r:.4f}) - "
               f"Val Loss: {avg_val_loss:.4f} (T: {avg_val_loss_t:.4f}, R: {avg_val_loss_r:.4f})")
 
+        history['train_loss'].append(avg_train_loss)
+        history['val_loss'].append(avg_val_loss)
+        history['train_loss_t'].append(avg_train_loss_t)
+        history['val_loss_t'].append(avg_val_loss_t)
+        history['train_loss_r'].append(avg_train_loss_r)
+        history['val_loss_r'].append(avg_val_loss_r)
+
         if avg_val_loss < best_val_loss and num_val_batches > 0:
             best_val_loss = avg_val_loss
             save_path = os.path.join(save_dir, 'ps6d_best.pth')
@@ -178,4 +187,4 @@ def train_ps6d(model, train_loader, val_loader, num_epochs, lr, device, save_dir
             }, save_path)
             print(f"  -> 🎉 Đã lưu model tốt nhất tại {save_path} (Val Loss: {best_val_loss:.4f})")
 
-    return model
+    return model, history

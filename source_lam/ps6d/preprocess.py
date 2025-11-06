@@ -51,7 +51,7 @@ def project_3d_to_2d(p3d, intr):
     return np.array([u, v])
 
 # ============================================================
-# CLASS ParcelDataset 
+#  CLASS ParcelDataset
 # ============================================================
 class ParcelDataset(Dataset):
     def __init__(self, base_path, mask_dir, gt_csv_path, num_points,
@@ -222,15 +222,13 @@ def collate_fn(batch):
 def main_preprocess():
     print("Bắt đầu quá trình Tiền xử lý (Preprocessing)...")
 
-    # --- Cấu hình ---
-    base_path = r"/content/drive/MyDrive/ViettelAIRace/Train"
-    mask_dir = r"/content/drive/MyDrive/ViettelAIRace/yolact_result_new_train_public_v2"
-    gt_csv_path = r"/content/drive/MyDrive/ViettelAIRace/Train/Public_train.csv"
+    base_path = r"/home/hp/VTAIRACE/source_lam/dataset/Train"
+    mask_dir = r"/home/hp/VTAIRACE/source_haanh/yolact_result_new_train_public_v2"
+    gt_csv_path = r"/home/hp/VTAIRACE/source_lam/dataset/Train/Public_train.csv"
 
-    # *** Đặt num_points  ***
-    NUM_POINTS = 1024
+    NUM_POINTS = 2048
 
-    OUTPUT_DIR = "/content/drive/MyDrive/ViettelAIRace/preprocessed_data"
+    OUTPUT_DIR = "/home/hp/VTAIRACE/source_lam/ps6d/preprocessed_data"
 
     if os.path.exists(OUTPUT_DIR):
         print(f"Warning: Thư mục {OUTPUT_DIR} đã tồn tại. Xóa các file cũ...")
@@ -240,7 +238,6 @@ def main_preprocess():
         os.makedirs(OUTPUT_DIR)
         print(f"Đã tạo thư mục: {OUTPUT_DIR}")
 
-    # (Copy lại các hằng số camera)
     color_intrinsics = {
         'width': 1280, 'height': 720,
         'fx': 643.90087890625, 'fy': 643.1365356445312,
@@ -258,12 +255,12 @@ def main_preprocess():
     ])
     t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 
-    # 1. Khởi tạo Dataset (Logic chậm)
+    # 1. Khởi tạo Dataset 
     dataset = ParcelDataset(
         base_path=base_path,
         mask_dir=mask_dir,
         gt_csv_path=gt_csv_path,
-        num_points=NUM_POINTS, # <<< 2048
+        num_points=NUM_POINTS,
         color_intrinsics=color_intrinsics,
         depth_intrinsics=depth_intrinsics,
         R_d2c=R_depth_to_color,
@@ -280,7 +277,6 @@ def main_preprocess():
 
     print(f"Sử dụng {num_workers} workers để tiền xử lý {len(dataset)} ảnh...")
 
-    # Dùng batch_size=32 để tăng tốc I/O
     loader = DataLoader(dataset, batch_size=8, num_workers=num_workers, collate_fn=collate_fn)
 
     save_idx = 0

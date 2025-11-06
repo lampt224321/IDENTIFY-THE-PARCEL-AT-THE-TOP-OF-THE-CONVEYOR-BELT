@@ -131,11 +131,11 @@ class FeaturePropagation(nn.Module):
         return new_points.permute(0, 2, 1)
 
 # ============================================================
-# PS6D Network
+# PS6D Network 
 # ============================================================
 
 class PS6DNetwork(nn.Module):
-    def __init__(self, num_points=1024, feature_dim=128):
+    def __init__(self, num_points=2048, feature_dim=128):
         super().__init__()
         self.num_points = num_points
         self.sa1 = SetAbstraction(512, 0.05, 32, 3, [32, 32, 64])
@@ -157,7 +157,7 @@ class PS6DNetwork(nn.Module):
         self.rotation_head = nn.Sequential(
             nn.Conv1d(feature_dim, 128, 1), nn.BatchNorm1d(128), nn.ReLU(),
             nn.Conv1d(128, 64, 1), nn.BatchNorm1d(64), nn.ReLU(),
-            nn.Conv1d(64, 3, 1) # <<< Thay đổi từ 4 thành 3
+            nn.Conv1d(64, 3, 1)
         )
 
     def forward(self, xyz):
@@ -174,7 +174,7 @@ class PS6DNetwork(nn.Module):
         feat = l0_points.permute(0, 2, 1)
         centroid_offset = self.centroid_head(feat).permute(0, 2, 1)
 
-        #  Lấy vector pháp tuyến và chuẩn hóa nó 
+        # *** Lấy vector pháp tuyến và chuẩn hóa nó ***
         pred_normal = self.rotation_head(feat).permute(0, 2, 1)
         pred_normal = F.normalize(pred_normal, p=2, dim=-1) # Đảm bảo nó là vector đơn vị
 
@@ -192,7 +192,7 @@ class PS6DLoss(nn.Module):
 
     def translation_loss(self, pred_offset, gt_offset, points, gt_centroid):
         """
-        Center Distance Sensitive Loss (Không đổi)
+        Center Distance Sensitive Loss 
         """
         dist_to_center = torch.norm(points - gt_centroid.unsqueeze(1), dim=-1)
         max_dist = dist_to_center.max(dim=1, keepdim=True)[0]
@@ -220,14 +220,17 @@ class PS6DLoss(nn.Module):
         loss = 1.0 - dot_product
         return loss.mean()
 
+    # *** Hàm forward ***
     def forward(self,
                 pred_offset, pred_normal, 
                 gt_offset, gt_normal,     
                 points, gt_centroid
                 ):
 
+        # 1. Tính loss translation
         loss_t = self.translation_loss(pred_offset, gt_offset, points, gt_centroid)
 
+        # 2. Tính loss rotation 
         if self.weight_rotation > 0:
             loss_r = self.orientation_loss(pred_normal, gt_normal)
         else:
