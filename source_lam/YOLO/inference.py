@@ -13,6 +13,7 @@ IMAGE_DIR = 'dataset/images/train/'
 # Thư mục LƯU các file .npy
 OUTPUT_DIR = 'runs/inference_npy/'
 
+
 # ----------------------------
 
 def run_inference_and_save_npy():

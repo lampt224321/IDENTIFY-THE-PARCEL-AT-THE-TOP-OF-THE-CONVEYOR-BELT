@@ -36,6 +36,7 @@ def main():
         hsv_v=0.4,        # Kiểm soát độ sáng (Value/Brightness)
     )
 
+
     print("Hoàn tất huấn luyện!")
 
     save_directory = os.path.join(
