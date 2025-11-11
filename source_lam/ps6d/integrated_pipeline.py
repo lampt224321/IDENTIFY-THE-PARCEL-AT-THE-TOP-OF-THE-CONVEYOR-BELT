@@ -54,7 +54,7 @@ class PS6DInference:
         normal_vector_norm = None
         variance = 1e6
         try:
-            clustering = DBSCAN(eps=0.01, min_samples=50).fit(pred_centroids_np)
+            clustering = DBSCAN(eps=0.02, min_samples=30).fit(pred_centroids_np)
             labels = clustering.labels_
             unique_labels, counts = np.unique(labels[labels != -1], return_counts=True)
             if len(counts) > 0:
@@ -149,7 +149,7 @@ t_depth_to_color = np.array([[-0.05905], [8.67399e-5], [0.00041]])
 # ============================================================
 # Main Pipeline 
 # ============================================================
-def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="Submission3D.csv"):
+def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="Submission3D_train.csv"):
 
     np.random.seed(42)
     try:
@@ -221,20 +221,12 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="Submiss
                     print(f"  -> File {os.path.basename(mask_file_path)}: Bỏ qua (Overlap {overlap_ratio*100:.1f}% < {MIN_OVERLAP_RATIO*100}%)")
                     continue
 
-                # === SỬA LỖI LỜI GỌI HÀM ===
-                # Dòng CŨ:
-                # points_3d = get_point_cloud_from_mask(
-                #     mask_img, depth,
-                #     depth_intrinsics, color_intrinsics,
-                #     R_depth_to_color, t_depth_to_color
-                # )
                 
                 # Dòng MỚI (đã sửa):
                 points_3d = get_point_cloud_from_mask(
                     mask_img, depth,
                     color_intrinsics # Chỉ cần thông số MÀU
                 )
-                # === KẾT THÚC SỬA LỖI ===
 
                 if len(points_3d) < 100:
                     # Thêm log để biết TẠI SAO nó bị lọc
@@ -308,8 +300,8 @@ def main_pipeline_with_ps6d(model_path, base_path, mask_dir, output_csv="Submiss
 if __name__ == "__main__":
     MODEL_PATH = "/home/hp/VTAIRACE/source_lam/ps6d/ps6dmodel/testmodel/ps6d_best.pth"
     BASE_DATA_PATH = "/home/hp/VTAIRACE/source_lam/dataset/Train"
-    MASK_DIR = "/home/hp/VTAIRACE/Code_Angie/masks_npy"
-    OUTPUT_CSV = "Submission3D.csv"
+    MASK_DIR = "/home/hp/VTAIRACE/source_lam/masks_npy"
+    OUTPUT_CSV = "Submission3D_train.csv"
 
     results = main_pipeline_with_ps6d(
         model_path=MODEL_PATH,

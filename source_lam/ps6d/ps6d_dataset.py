@@ -75,8 +75,8 @@ def train_ps6d(model, train_loader, val_loader, num_epochs, lr, device, save_dir
     has_rotation_gt = True
 
     if has_rotation_gt:
-        weight_t = 4.0 # Tỷ lệ 80%
-        weight_r = 1.0  # Tỷ lệ 20%
+        weight_t = 4.0 # Tỷ lệ 90%
+        weight_r = 1.0  # Tỷ lệ 10%
         print(f"Đang bật loss (T: {weight_t}, R: {weight_r}) - Ưu tiên MCE 80%")
         criterion = PS6DLoss(weight_translation=weight_t, weight_rotation=weight_r).to(device)
     else:

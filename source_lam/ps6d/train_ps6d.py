@@ -73,16 +73,16 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"\nUsing device: {device}")
 
-    print("Huấn luyện model (MCE + OE 80/20) từ đầu (trên dữ liệu đã tiền xử lý)...")
+    print("Huấn luyện model (MCE + OE 90/10) từ đầu (trên dữ liệu đã tiền xử lý)...")
 
-    NUM_EPOCHS_TO_RUN = 200
+    NUM_EPOCHS_TO_RUN = 500
 
     model, history = train_ps6d(
         model,
         train_loader,
         val_loader,
         num_epochs=NUM_EPOCHS_TO_RUN,
-        lr=0.0001,
+        lr=0.001,
         device=device,
         save_dir=save_dir
     )
